@@ -395,7 +395,7 @@ def proj_simplex_euclidean(x: torch.Tensor, temp=None, tau=0.0001, max_iter=1000
     ans = torch.maximum(x - midpoint, null)
     return ans / torch.sum(ans)
 
-class FatAdamW(optim.Optimizer):
+class SimplexAdamW(optim.Optimizer):
     """
     Implements Adam algorithm with weight decay for Weight Lora adapter
 
