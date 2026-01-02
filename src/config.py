@@ -448,7 +448,7 @@ class TrainingArguments(Seq2SeqTrainingArguments):
     )
     lora_extention: Optional[str] = field(
         default=None,
-        metadata={"help": "How to extednd adapters in FatLoRA. Can be smart ot dummy"}
+        metadata={"help": "How to extednd adapters in SimplexLoRA. Can be smart ot dummy"}
     )
     optimizer_type: Optional[str] = field(
         default="AdamW",

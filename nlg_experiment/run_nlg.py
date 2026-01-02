@@ -46,7 +46,7 @@ def main():
     training_args.label_names = ["labels"] # peft and compute_metrics() problem
     ft_strategy = training_args.ft_strategy
     if ft_strategy == "WeightLoRA":
-        if training_args.use_fat: ft_strategy = "FatLoRA"
+        if training_args.use_fat: ft_strategy = "SimplexLoRA"
         if training_args.use_rand: ft_strategy = "RandLoRA"
     training_args.ft_strategy = ft_strategy
     ######################### Optimizer and Scheduler ##########################
@@ -60,12 +60,12 @@ def main():
         training_args.learning_rate = lr
     else:
         training_args.learning_rate = float(training_args.learning_rate)
-    if training_args.ft_strategy == "FatLoRA":
+    if training_args.ft_strategy == "SimplexLoRA":
         prefix = "weight_lora"
         weight_params = [p for name, p in model.named_parameters() if f"{prefix}_w" in name]
         loraAB_params = [p for name, p in model.named_parameters() if f"{prefix}_A" in name or f"{prefix}_B" in name]
         other_params = [p for name, p in model.named_parameters() if prefix not in name]
-        optimizer = optimizers.FatAdamW(
+        optimizer = optimizers.SimplexAdamW(
             [{"params" : weight_params, "proj" : optimizers.proj_0,
               "lr" : training_args.learning_rate_w, "name" : "weight_params"},
              {"params" : loraAB_params, "name" : "loraAB"},
@@ -137,7 +137,7 @@ def main():
         train_metrics["train_samples"] = min(max_train_samples, len(train_dataset))
         train_metrics["train_memory_gb"] = torch.cuda.max_memory_allocated() / 2**30
         train_metrics["train_runtime"] /= 60
-        if training_args.ft_strategy in ["WeightLoRA", "RandLoRA", "FatLoRA"]:
+        if training_args.ft_strategy in ["WeightLoRA", "RandLoRA", "SimplexLoRA"]:
             i = 0
             for name, param in model.named_parameters():
                 if "weight_lora_w" in name:

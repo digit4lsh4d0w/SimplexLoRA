@@ -1,7 +1,148 @@
-import random, torch, peft
+import random, torch, peft, os
 import torch.nn as nn
 import numpy as np
 from typing import Callable
+
+def get_run_name(args, parser, tuning=False):
+    key_args = ["optimizer", "model", "dataset", "ft_strategy"]
+    ignore_args = [
+        "verbose", "seed", "run_prefix", "wandb_project", "results_path",
+        "tune_path", "data_path", "wandb", "tune", "use_old_tune_params",
+        "eval_runs", "augment", "run_name",
+    ]
+    ignore_args_tuning = [
+        "n_epoches", "lr", "weight_decay", "rotate", "scale_bound",
+        "weight_init", "ns_steps",
+    ]
+    if getattr(args, 'optimizer', None) in ["taia", "adam-sania"]:
+        ignore_args_tuning.append("scale")
+    
+    defaults = vars(parser.parse_args([]))
+
+    # Helper to abbreviate parameter names and values
+    def abbreviate(key, value):
+        mapping = {
+            "batch_size": "bs",
+            "learning_rate": "lr",
+            "weight_decay": "wd",
+            "weight_decay_w": "wdw",
+            "learning_rate_w": "lrw",
+            "max_fat_steps": "mfs",
+            "fat_step": "fs",
+            "max_seq_length": "msl",
+            "max_eval_samples": "mes",
+            "gradient_accumulation_steps": "gas",
+            "max_train_steps": "mts",
+            "lora_r": "r",
+            "lora_alpha": "al",
+            "lora_dropout": "drop",
+            "quantization_bit": "qb",
+            "eval_steps": "es",
+        }
+        short_key = mapping.get(key, key)
+        if isinstance(value, float):
+            # Use scientific notation without excessive zeros
+            if value == 0.0:
+                val_str = "0"
+            elif abs(value) >= 1e-3:
+                val_str = f"{value:.4g}".rstrip('0').rstrip('.')
+            else:
+                val_str = f"{value:.1e}".replace('-', 'm').replace('+', '')
+        else:
+            val_str = str(value)
+        return f"{short_key}{val_str}"
+
+    if not tuning:
+        print("~~~~~~~~~~~~~~~ KEY ARGUMENTS ~~~~~~~~~~~~~~~")
+    prefix_parts = []
+    for key in key_args:
+        if hasattr(args, key):
+            value = getattr(args, key)
+            if value is None:
+                value = "None"
+            if key == "model":
+                # Replace dangerous characters
+                value = str(value).replace("/", "-").replace("\\", "-")
+            if not tuning:
+                print(f"{key:<20} {value}")
+            prefix_parts.append(str(value))
+
+    prefix = "_".join(prefix_parts)
+
+    if not tuning:
+        print("~~~~~~~~~~~~~~~ ARGUMENTS ~~~~~~~~~~~~~~~")
+    non_default_parts = []
+    for key, value in vars(args).items():
+        if not tuning:
+            print(f"{key:<40} {value}")
+        if key in ignore_args:
+            continue
+        if key in ignore_args_tuning and tuning:
+            continue
+        if key in key_args:
+            continue
+        default_val = defaults.get(key, None)
+        if default_val is None or value != default_val:
+            non_default_parts.append(abbreviate(key, value))
+
+    non_default_string = "__".join(non_default_parts)
+
+    if getattr(args, "run_prefix", None) is not None and not tuning:
+        prefix = args.run_prefix + "__" + prefix
+
+    full_name = f"{prefix}__{non_default_string}" if non_default_string else prefix
+
+    # Optional: enforce max length (e.g., 200 chars)
+    if len(full_name) > 200:
+        full_name = full_name[:200].rstrip("_-")
+
+    return full_name
+
+def shuffleDict(d):
+    keys = list(d.keys())
+    random.shuffle(keys)
+    [(key, d[key]) for key in keys]
+    random.shuffle(keys)
+    [(key, d[key]) for key in keys]
+    random.shuffle(keys)
+    keys = [(key, d[key]) for key in keys]
+    # keys = d(keys)
+    return dict(keys)
+
+def set_global_seed(seed=18):
+    def seed_worker(worker_seed):
+        worker_seed = torch.initial_seed() % 2**32
+        np.random.seed(worker_seed)
+        random.seed(worker_seed)
+
+    torch.use_deterministic_algorithms(True)
+    os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+    g = torch.Generator()
+    g.manual_seed(seed)
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    return g, seed_worker
+
+def print_trainable_params(model, verbose=True):
+    trainable_params = 0
+    all_param = 0
+    for param in model.parameters():
+        all_param += param.numel()
+        if param.requires_grad:
+            trainable_params += param.numel()
+    for param in model.buffers():
+        all_param += param.numel()
+        if param.requires_grad:
+            trainable_params += param.numel()
+    train_proportion = 100 * trainable_params / all_param
+
+    if verbose:
+        print(
+            f"trainable params: {trainable_params / 1_000_000:.2f}M || all params: {all_param / 1_000_000_000:.2f}B || trainable%: {train_proportion:.2f}%"
+        )
+
+    return all_param, trainable_params, 100 * trainable_params / all_param
 
 def print_trainable_parameters(model, verbose=True):
     """
@@ -42,7 +183,7 @@ def set_device(device_no: int):
     return device
 
 def count_atapters(model, peft_type):
-    if peft_type in ["LoRA", "ADALoRA", "DoRA", "rsLoRA", "WeightLoRA"]:
+    if peft_type in ["LoRA", "ADALoRA", "DoRA", "rsLoRA", "WeightLoRA", "SimplexLoRA"]:
         adapter_name = "lora_A"
     elif peft_type == "LoKR":
         adapter_name = "lokr_w1"
@@ -119,7 +260,7 @@ def get_peft_arguments(training_args):
             lora_dropout        = training_args.lora_dropout,
             use_rslora          = True,
         )
-    elif training_args.ft_strategy == "WeightLoRA":
+    elif training_args.ft_strategy in ["WeightLoRA", "SimplexLoRA"]:
         peft_args = peft.LoraConfig(
             r                   = training_args.lora_r,
             lora_alpha          = training_args.lora_alpha,
@@ -131,21 +272,62 @@ def get_peft_arguments(training_args):
     else:
         raise ValueError(f"Incorrect FT type {training_args.ft_strategy}!")
 
-    if training_args.model_name in ["microsoft/deberta-v3-base"]:
-        # peft_args.target_modules = ["query_proj", "key_proj", "value_proj",
-        #                             "intermediate.dence", "output.dence"]
-        peft_args.target_modules = ["query_proj", "key_proj", "value_proj",
-                                    "intermediate.dense", "output.dense"]
-        # peft_args.target_modules = "all-linear"
-    elif training_args.model_name in ["facebook/bart-large"]:
-        # peft_args.target_modules = ["q_proj", "k_proj", "v_proj", "o_proj",
-        #                             "gate_proj", "up_proj", "down_proj", 
-        #                             "fc1", "fc2"]
-        peft_args.target_modules = "all-linear"
-    elif training_args.model_name in ["meta-llama/Llama-2-7b-hf", "meta-llama/Meta-Llama-3.1-8B"]:
-        peft_args.target_modules = ["q_proj", "k_proj", "v_proj", "o_proj", 
-                                    "gate_proj", "up_proj", "down_proj", 
-                                    "lm_head"]
+    if "deberta" in training_args.model.lower():
+        peft_args.target_modules = [
+            "query_proj",
+            "key_proj",
+            "value_proj",
+            "intermediate.dense",
+            "output.dense",
+        ]
+    elif "bart" in training_args.model.lower():
+        peft_args.target_modules = [
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj",
+            "gate_proj",
+            "up_proj",
+            "down_proj",
+            "fc1",
+            "fc2",
+        ]
+    elif "llama" in training_args.model.lower():
+        peft_args.target_modules = [
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj",
+            "gate_proj",
+            "up_proj",
+            "down_proj",
+            "lm_head",
+        ]
+    elif "qwen" in training_args.model.lower():
+        peft_args.target_modules = [
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj",
+            "gate_proj",
+            "up_proj",
+            "down_proj",
+            "lm_head",
+        ]
+    elif "distilbert-base" in training_args.model.lower():
+        peft_args.target_modules = [
+            "q_lin",
+            "k_lin",
+            "v_lin",
+        ]
+    elif "flan" in training_args.model.lower() or "t5" in training_args.model.lower():
+        peft_args.target_modules = [
+            "v",
+            "o",
+            "q",
+            "o",
+            "wi",
+        ]
     else:
         raise ValueError(f"Pass target_modules to your model {training_args.model_name}")
     return peft_args
