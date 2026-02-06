@@ -3,6 +3,8 @@ import numpy as np
 from datasets import load_dataset, load_metric
 from transformers.utils import is_offline_mode
 from filelock import FileLock
+from peft import prepare_model_for_kbit_training
+import torch
 from transformers import (
     AutoConfig,
     AutoModelForSeq2SeqLM,
@@ -11,7 +13,8 @@ from transformers import (
     MBartTokenizer,
     MBartTokenizerFast,
     MBart50Tokenizer,
-    MBart50TokenizerFast
+    MBart50TokenizerFast,
+    BitsAndBytesConfig
 )
 
 # reserence code: https://github.com/QingruZhang/AdaLoRA/blob/main/NLG_QA/examples/summarization/run_summarization.py
@@ -101,15 +104,31 @@ def nlg_prepocess(data_args, training_args, model_args):
         revision=model_args.model_revision,
         use_auth_token=True if model_args.use_auth_token else None,
     )
+
+    if torch.cuda.get_device_capability()[0] >= 8:
+        torch_dtype = torch.bfloat16
+    else:
+        torch_dtype = torch.float16
+    bnb_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=torch_dtype,
+        bnb_4bit_use_double_quant=True,
+    )
     model = AutoModelForSeq2SeqLM.from_pretrained(
         model_args.model_name_or_path,
         from_tf=bool(".ckpt" in model_args.model_name_or_path),
         config=config,
+        quantization_config=bnb_config,
         cache_dir=model_args.cache_dir,
         revision=model_args.model_revision,
         use_auth_token=True if model_args.use_auth_token else None,
     )
-
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+        model.config.pad_token_id = tokenizer.eos_token_id
+    model.gradient_checkpointing_enable()
+    model = prepare_model_for_kbit_training(model)
     model.resize_token_embeddings(len(tokenizer))
 
     if model.config.decoder_start_token_id is None and isinstance(tokenizer, (MBartTokenizer, MBartTokenizerFast)):
@@ -305,8 +324,18 @@ def nlg_prepocess(data_args, training_args, model_args):
 
     def compute_metrics(eval_preds):
         preds, labels = eval_preds
+        print("preds type:", type(preds))
         if isinstance(preds, tuple):
-            preds = preds[0]
+            print("preds tuple lens:", len(preds), "elem0 type:", type(preds[0]))
+            try:
+                print("elem0 shape:", preds[0].shape, "dtype:", preds[0].dtype)
+            except Exception as e:
+                print("elem0 shape/dtype err:", e)
+        else:
+            try:
+                print("preds shape:", preds.shape, "dtype:", preds.dtype)
+            except Exception as e:
+                print("preds shape/dtype err:", e)
         decoded_preds = tokenizer.batch_decode(preds, skip_special_tokens=True)
         if data_args.ignore_pad_token_for_loss:
             # Replace -100 in the labels as we can't decode them.
