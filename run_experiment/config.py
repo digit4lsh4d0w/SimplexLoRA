@@ -69,7 +69,7 @@ def parse_args():
     parser.add_argument(
         "--run_prefix", default=None, help="Run prefix for the experiment run name"
     )
-    parser.add_argument("--wandb_project", default="Weight_LoRA")
+    parser.add_argument("--wandb_project", default="Simplex_LoRA")
     parser.add_argument(
         "--verbose",
         action="store_true",
