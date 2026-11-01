@@ -25,6 +25,16 @@ dependencies = [
     "wandb>=0.31.0",
 ]
 
+[project.scripts]
+simplexlora-decompile = "simplexlora.experiments.decompile:main"
+simplexlora-dotprod = "simplexlora.experiments.dotprod:main"
+simplexlora-glue = "simplexlora.experiments.glue.cli:main"
+simplexlora-llm = "simplexlora.experiments.llm.cli:main"
+simplexlora-memory = "simplexlora.experiments.memory:main"
+simplexlora-nlg = "simplexlora.experiments.nlg.cli:main"
+simplexlora-parse-logs = "simplexlora.tools.logs:main"
+simplexlora-squad = "simplexlora.experiments.squad.cli:main"
+
 [project.optional-dependencies]
 cuda = [
     "accelerate>=1.15.0",
@@ -36,16 +46,15 @@ rocm = [
     "accelerate>=1.15.0",
     "bitsandbytes>=0.50.2",
     "peft",
-    "rocm[libraries,device-gfx1201]>=7.14,<7.15",
+    "rocm[libraries,device-gfx1201]>=7.14",
     "torch>=2.15.0",
 ]
 
 [tool.uv]
-package = false
 environments = ["sys_platform == 'linux'"]
 index-strategy = "unsafe-best-match"
 override-dependencies = [
-    "rocm[libraries,device-gfx1201]>=7.14,<7.15",
+    "rocm[libraries,device-gfx1201]>=7.14",
 ]
 conflicts = [
     [
@@ -53,6 +62,9 @@ conflicts = [
         { extra = "rocm" },
     ],
 ]
+
+[tool.uv.workspace]
+members = ["peft"]
 
 [tool.uv.sources]
 nvidia-cublas = { index = "pypi" }
@@ -70,7 +82,7 @@ nvidia-nccl-cu13 = { index = "pypi" }
 nvidia-nvjitlink = { index = "pypi" }
 nvidia-nvshmem-cu13 = { index = "pypi" }
 nvidia-nvtx = { index = "pypi" }
-peft = { path = "peft", editable = true }
+peft = { workspace = true }
 rocm = { index = "pytorch-rocm714", extra = "rocm" }
 torch = [
     { index = "pytorch-cu132", extra = "cuda" },
@@ -102,3 +114,7 @@ extend-exclude = ["peft", ".venv"]
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F"]
+
+[build-system]
+requires = ["uv_build>=0.13.6,<0.14.0"]
+build-backend = "uv_build"

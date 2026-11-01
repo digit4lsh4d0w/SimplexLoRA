@@ -30,10 +30,13 @@ Check the PEFT Adapters API Reference section for a list of supported PEFT metho
 
 ## Quickstart
 
-Install PEFT from pip:
+This repository vendors a modified PEFT package as a uv workspace member.
+Install the synchronized environment from the repository root:
 
 ```bash
-pip install peft
+uv sync --extra rocm
+# or
+uv sync --extra cuda
 ```
 
 Prepare a model for training with a PEFT method such as LoRA by wrapping the base model and PEFT configuration with `get_peft_model`. For the bigscience/mt0-large model, you're only training 0.19% of the parameters!
