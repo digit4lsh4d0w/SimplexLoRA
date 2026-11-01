@@ -21,11 +21,11 @@ import matplotlib.pyplot as plt
 os.chdir(Path(__file__).resolve().parent)
 
 # Set up the matplotlib figure
-plt.rc("axes", titlesize=30, titleweight="bold") #fontsize of the title
-plt.rc("axes", labelsize=30) #fontsize of the x and y labels
-plt.rc("xtick", labelsize=25) #fontsize of the x tick labels
-plt.rc("ytick", labelsize=25) #fontsize of the y tick labels
-plt.rc("legend", fontsize=25) #fontsize of the legend
+plt.rc("axes", titlesize=30, titleweight="bold")  # fontsize of the title
+plt.rc("axes", labelsize=30)  # fontsize of the x and y labels
+plt.rc("xtick", labelsize=25)  # fontsize of the x tick labels
+plt.rc("ytick", labelsize=25)  # fontsize of the y tick labels
+plt.rc("legend", fontsize=25)  # fontsize of the legend
 
 # %% [markdown]
 # ## LoRA Memory Experiment
@@ -33,7 +33,7 @@ plt.rc("legend", fontsize=25) #fontsize of the legend
 # %%
 plt.figure(figsize=(12, 4))
 bs = 64
-#plt.title(f"LoRA memory plot. Batch size = {bs}")
+# plt.title(f"LoRA memory plot. Batch size = {bs}")
 plt.ylabel("Train memory (GB)")
 plt.xlabel("Number of LoRA adapters")
 SAVING = True
@@ -44,35 +44,29 @@ for r, color in zip([8, 32, 64, 128, 256], colors):
         a = f.readlines()
     for line in a:
         x.append(int(line.split()[0].split("=")[1][:-1]))
-        y.append(float(line.split()[1])+3.5)
+        y.append(float(line.split()[1]) + 3.5)
     plt.plot(x, y, label=f"r = {r}", linewidth=4, color=color)
 memory_limit_gb = 16
-plt.hlines(y=memory_limit_gb, xmin=0, xmax=37, color="red", 
-           linestyles="--", linewidth=5)
-#plt.fill_between(x, mean-std, mean+std, alpha=0.2, color=color)
-plt.text(x=0.1, y=memory_limit_gb+0.02, s="GPU memory limit", color="red",
-         fontsize=20, fontweight="bold")
+plt.hlines(y=memory_limit_gb, xmin=0, xmax=37, color="red", linestyles="--", linewidth=5)
+# plt.fill_between(x, mean-std, mean+std, alpha=0.2, color=color)
+plt.text(x=0.1, y=memory_limit_gb + 0.02, s="GPU memory limit", color="red", fontsize=20, fontweight="bold")
 plt.grid(True)
 plt.tight_layout()
 plt.legend(loc="lower right")
 if SAVING:
-    plt.savefig(f"./figures/lora_memory_bs_{bs}.pdf",
-                format="pdf", bbox_inches="tight")
-    plt.savefig(f"./figures/lora_memory_bs_{bs}.png",
-                format="png", bbox_inches="tight")
+    plt.savefig(f"./figures/lora_memory_bs_{bs}.pdf", format="pdf", bbox_inches="tight")
+    plt.savefig(f"./figures/lora_memory_bs_{bs}.png", format="png", bbox_inches="tight")
 plt.show()
 
 # %%
 plt.figure(figsize=(12, 4))
 SAVING = True
-plt.text(x=0.25, y=0.5, s="САША ЗЫЛЬ НАРИСУЙ КАРТИНКУ", color="red",
-         fontsize=20, fontweight="bold")
+plt.text(x=0.25, y=0.5, s="САША ЗЫЛЬ НАРИСУЙ КАРТИНКУ", color="red", fontsize=20, fontweight="bold")
 plt.tight_layout()
 plt.xticks([])
 plt.yticks([])
 if SAVING:
-    plt.savefig("./figures/tmp.pdf",
-                format="pdf", bbox_inches="tight")
+    plt.savefig("./figures/tmp.pdf", format="pdf", bbox_inches="tight")
 plt.show()
 
 # %% [markdown]
@@ -102,7 +96,7 @@ exp_res_10 = {
 # %%
 plt.figure(figsize=(12, 8))
 model, task = "deberta", "mnli"
-#plt.title(f"Dot Prod Experiment")
+# plt.title(f"Dot Prod Experiment")
 plt.xlabel("LoRA Adapters")
 plt.ylabel("Dot Product")
 SAVING = False
@@ -124,7 +118,7 @@ for i, (name, y) in enumerate(zip(names, y_list)):
     else:
         color, label = "blue", "value"
     marker, s = ("*", 300) if name in exp_res_5.values() else ("o", 150)
-    if i >= 3: 
+    if i >= 3:
         if name in exp_res_5.values() and star_marker_flag:
             label = "WeightLoRA\nchosen layers"
             star_marker_flag = False
@@ -133,22 +127,18 @@ for i, (name, y) in enumerate(zip(names, y_list)):
     plt.scatter(i, y, label=label, marker=marker, s=s, color=color)
     if i % 3 == 0:
         if i > 0:
-            plt.vlines(x=i-0.5, ymin=0, ymax=y_max+lv, color="grey", alpha=alpha,
-                    linestyles="--", linewidth=3)
+            plt.vlines(x=i - 0.5, ymin=0, ymax=y_max + lv, color="grey", alpha=alpha, linestyles="--", linewidth=3)
         delta = 0.4 if i < 30 else 0.2
-        plt.text(x=i+delta, y=y_max+lt, s=f"#{i // 3}", color="grey", alpha=alpha,
-                 fontsize=15)
+        plt.text(x=i + delta, y=y_max + lt, s=f"#{i // 3}", color="grey", alpha=alpha, fontsize=15)
 plt.xticks([])
-plt.ylim(-0.01, y_max+0.2)
+plt.ylim(-0.01, y_max + 0.2)
 plt.xlim(-0.5, 35.5)
 plt.grid(False)
 plt.tight_layout()
 plt.legend(loc=(0, 0.5))
 if SAVING:
-    plt.savefig(f"./figures/dotprod_{model}_{task}.pdf",
-                format="pdf", bbox_inches="tight")
-    plt.savefig(f"./figures/dotprod_{model}_{task}.png",
-                format="png", bbox_inches="tight")
+    plt.savefig(f"./figures/dotprod_{model}_{task}.pdf", format="pdf", bbox_inches="tight")
+    plt.savefig(f"./figures/dotprod_{model}_{task}.png", format="png", bbox_inches="tight")
 plt.show()
 
 # %%
