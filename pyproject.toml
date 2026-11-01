@@ -1,0 +1,104 @@
+[project]
+name = "simplexlora"
+version = "0.1.0"
+description = "Layer selection and fine-tuning experiments for Simplex LoRA"
+readme = "README.md"
+authors = [
+    { name = "Redrov Ivan", email = "digit4lsh4d0w@ya.ru" }
+]
+requires-python = ">=3.15"
+dependencies = [
+    "datasets>=5.1.0",
+    "evaluate>=0.4.6",
+    "filelock>=4.2.5",
+    "huggingface-hub>=2.4.0",
+    "loguru>=0.7.3",
+    "matplotlib>=3.11.2",
+    "nltk>=3.10.4",
+    "numpy>=2.5.4",
+    "scikit-learn>=1.9.1",
+    "scipy>=1.18.1",
+    "sentencepiece>=0.2.2",
+    "termcolor>=3.3.0",
+    "tqdm>=4.70.1",
+    "transformers>=5.22.1",
+    "wandb>=0.31.0",
+]
+
+[project.optional-dependencies]
+cuda = [
+    "accelerate>=1.15.0",
+    "bitsandbytes>=0.50.2",
+    "peft",
+    "torch>=2.15.0",
+]
+rocm = [
+    "accelerate>=1.15.0",
+    "bitsandbytes>=0.50.2",
+    "peft",
+    "rocm[libraries,device-gfx1201]>=7.14,<7.15",
+    "torch>=2.15.0",
+]
+
+[tool.uv]
+package = false
+environments = ["sys_platform == 'linux'"]
+index-strategy = "unsafe-best-match"
+override-dependencies = [
+    "rocm[libraries,device-gfx1201]>=7.14,<7.15",
+]
+conflicts = [
+    [
+        { extra = "cuda" },
+        { extra = "rocm" },
+    ],
+]
+
+[tool.uv.sources]
+nvidia-cublas = { index = "pypi" }
+nvidia-cuda-cccl = { index = "pypi" }
+nvidia-cuda-cupti = { index = "pypi" }
+nvidia-cuda-nvrtc = { index = "pypi" }
+nvidia-cuda-runtime = { index = "pypi" }
+nvidia-cudnn-cu13 = { index = "pypi" }
+nvidia-cufft = { index = "pypi" }
+nvidia-cufile = { index = "pypi" }
+nvidia-cusolver = { index = "pypi" }
+nvidia-cusparse = { index = "pypi" }
+nvidia-cusparselt-cu13 = { index = "pypi" }
+nvidia-nccl-cu13 = { index = "pypi" }
+nvidia-nvjitlink = { index = "pypi" }
+nvidia-nvshmem-cu13 = { index = "pypi" }
+nvidia-nvtx = { index = "pypi" }
+peft = { path = "peft", editable = true }
+rocm = { index = "pytorch-rocm714", extra = "rocm" }
+torch = [
+    { index = "pytorch-cu132", extra = "cuda" },
+    { index = "pytorch-rocm714", extra = "rocm" },
+]
+
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+
+[[tool.uv.index]]
+name = "pytorch-cu132"
+url = "https://download.pytorch.org/whl/cu132"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-rocm714"
+url = "https://download.pytorch.org/whl/rocm7.14"
+
+[dependency-groups]
+dev = [
+    "nbconvert>=7.17.2",
+    "ruff>=0.17.3",
+]
+
+[tool.ruff]
+line-length = 119
+extend-exclude = ["peft", ".venv", "*.ipynb"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
