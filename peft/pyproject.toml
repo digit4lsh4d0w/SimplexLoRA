@@ -1,3 +1,26 @@
+[build-system]
+requires = ["setuptools>=40.8.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "peft"
+version = "0.12.1.dev0"
+description = "Parameter-Efficient Fine-Tuning (PEFT) with Simplex LoRA support"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "numpy>=1.17",
+    "packaging>=20.0",
+    "psutil",
+    "pyyaml",
+    "torch>=1.13.0",
+    "transformers",
+    "tqdm",
+    "accelerate>=0.21.0",
+    "safetensors",
+    "huggingface-hub>=0.17.0",
+]
+
 [tool.black]
 # Only used by `hf-doc-builder´.
 line-length = 119
