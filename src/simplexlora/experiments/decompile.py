@@ -19,11 +19,13 @@ from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
     BitsAndBytesConfig,
+    PreTrainedTokenizerBase,
     Trainer,
     TrainingArguments,
 )
 
 from simplexlora import optimizers
+from .arguments import as_tokenizer
 
 
 DEFAULT_MODEL = "Qwen/Qwen2.5-Coder-7B-Instruct"
@@ -96,6 +98,8 @@ def file_bucket(path: str) -> int:
 
 def select_dataset(path: Path, max_train: int, max_validation: int, seed: int) -> tuple[Dataset, Dataset]:
     dataset = load_from_disk(str(path))
+    if not isinstance(dataset, Dataset):
+        raise TypeError("Expected a single dataset split, got DatasetDict")
     sample_count = min(len(dataset), max_train + max_validation)
     sampled = dataset.shuffle(seed=seed).select(range(sample_count))
 
@@ -125,12 +129,7 @@ def build_messages(row: dict) -> list[dict[str, str]]:
         },
         {
             "role": "user",
-            "content": (
-                "# This is the assembly code:\n"
-                f"{row['name']}:\n"
-                f"{assembly}\n"
-                "# What is the source code?\n"
-            ),
+            "content": (f"# This is the assembly code:\n{row['name']}:\n{assembly}\n# What is the source code?\n"),
         },
         {
             "role": "assistant",
@@ -139,7 +138,11 @@ def build_messages(row: dict) -> list[dict[str, str]]:
     ]
 
 
-def tokenize_dataset(dataset: Dataset, tokenizer: AutoTokenizer, max_seq_length: int) -> Dataset:
+def tokenize_dataset(
+    dataset: Dataset,
+    tokenizer: PreTrainedTokenizerBase,
+    max_seq_length: int,
+) -> Dataset:
     def encode(row: dict) -> dict:
         messages = build_messages(row)
         prompt_text = tokenizer.apply_chat_template(
@@ -198,10 +201,12 @@ class CausalLMCollator:
 
 
 def load_model_and_tokenizer(args: argparse.Namespace):
-    tokenizer = AutoTokenizer.from_pretrained(
-        args.model_id,
-        local_files_only=args.offline,
-        trust_remote_code=False,
+    tokenizer = as_tokenizer(
+        AutoTokenizer.from_pretrained(
+            args.model_id,
+            local_files_only=args.offline,
+            trust_remote_code=False,
+        )
     )
     tokenizer.padding_side = "right"
     if tokenizer.pad_token_id is None:
@@ -246,18 +251,14 @@ def load_model_and_tokenizer(args: argparse.Namespace):
 
 
 def build_optimizer(model, args: argparse.Namespace):
-    lora_layers = [
-        module for _, module in model.named_modules() if isinstance(module, LoraLayer)
-    ]
+    lora_layers: list[LoraLayer] = [module for _, module in model.named_modules() if isinstance(module, LoraLayer)]
     lora_ab_params = [
         parameter
         for name, parameter in model.named_parameters()
         if parameter.requires_grad and ("lora_A" in name or "lora_B" in name)
     ]
     weight_params = [
-        parameter
-        for name, parameter in model.named_parameters()
-        if parameter.requires_grad and "lora_weight" in name
+        parameter for name, parameter in model.named_parameters() if parameter.requires_grad and "lora_weight" in name
     ]
 
     if not lora_layers or not lora_ab_params or not weight_params:
@@ -295,11 +296,7 @@ def main() -> None:
     torch.cuda.set_device(0)
     torch.manual_seed(args.seed)
 
-    dataset_path = (
-        Path(args.dataset_path)
-        if args.dataset_path
-        else find_cached_snapshot(DEFAULT_DATASET)
-    )
+    dataset_path = Path(args.dataset_path) if args.dataset_path else find_cached_snapshot(DEFAULT_DATASET)
     train_raw, validation_raw = select_dataset(
         dataset_path,
         args.max_train_samples,
@@ -319,11 +316,7 @@ def main() -> None:
     optimizer = build_optimizer(model, args)
     effective_batch_size = args.batch_size * args.gradient_accumulation_steps
     steps_per_epoch = math.ceil(len(train_dataset) / effective_batch_size)
-    total_steps = (
-        args.max_steps
-        if args.max_steps > 0
-        else math.ceil(steps_per_epoch * args.num_train_epochs)
-    )
+    total_steps = args.max_steps if args.max_steps > 0 else math.ceil(steps_per_epoch * args.num_train_epochs)
     warmup_steps = max(1, int(total_steps * 0.03))
     training_args = TrainingArguments(
         output_dir=args.output_dir,

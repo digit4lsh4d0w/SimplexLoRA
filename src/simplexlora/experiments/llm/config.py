@@ -49,27 +49,19 @@ def parse_args():
         type=int,
         help="Batch size for training",
     )
-    parser.add_argument(
-        "--n_epoches_train", default=1, type=int, help="How many epochs to train"
-    )
+    parser.add_argument("--n_epoches_train", default=1, type=int, help="How many epochs to train")
     parser.add_argument(
         "--eval_runs",
         default=1,
         type=int,
         help="Number of re-training model with different seeds",
     )
-    parser.add_argument(
-        "--dtype", default=None, type=str, help="Default type for torch"
-    )
-    parser.add_argument(
-        "--use_old_tune_params", action="store_true", help="Use already tuned params"
-    )
+    parser.add_argument("--dtype", default=None, type=str, help="Default type for torch")
+    parser.add_argument("--use_old_tune_params", action="store_true", help="Use already tuned params")
 
     ### Wandb Arguments
     parser.add_argument("--wandb", action="store_true", help="To use wandb")
-    parser.add_argument(
-        "--run_prefix", default=None, help="Run prefix for the experiment run name"
-    )
+    parser.add_argument("--run_prefix", default=None, help="Run prefix for the experiment run name")
     parser.add_argument("--wandb_project", default="Simplex_LoRA")
     parser.add_argument(
         "--verbose",
@@ -87,23 +79,15 @@ def parse_args():
     parser.add_argument("--data_path", default="data", help="Path to save the datasets")
 
     ### Otimizer Arguments
-    parser.add_argument(
-        "--lr", "--learning_rate", default=None, type=float, help="learning rate"
-    )  # tuneed param
-    parser.add_argument(
-        "--wd", "--weight_decay", default=0, type=float, help="weight decay"
-    )  # tuneed param
+    parser.add_argument("--lr", "--learning_rate", default=None, type=float, help="learning rate")  # tuneed param
+    parser.add_argument("--wd", "--weight_decay", default=0, type=float, help="weight decay")  # tuneed param
     if args1.optimizer not in ["shampoo", "sgd"]:
         parser.add_argument("--beta1", default=0.9, type=float, help="First momentum")
-        parser.add_argument(
-            "--beta2", default=0.999, type=float, help="Second momentum"
-        )
+        parser.add_argument("--beta2", default=0.999, type=float, help="Second momentum")
         parser.add_argument("--eps", default=1e-8, type=float, help="Epsilon for Adam")
 
     if args1.optimizer in ["shampoo", "sgd", "muon"]:
-        parser.add_argument(
-            "--momentum", default=0.9, type=float, help="First momentum"
-        )
+        parser.add_argument("--momentum", default=0.9, type=float, help="First momentum")
 
     if args1.optimizer in ["soap"]:
         parser.add_argument(
@@ -120,16 +104,10 @@ def parse_args():
             help="Freqiensy to update Q for Shampoo and SOAP",
         )
     if args1.optimizer in ["muon"]:
-        parser.add_argument(
-            "--ns_steps", default=10, type=int, help="Number of the NS steps algo"
-        )
-        parser.add_argument(
-            "--adamw_lr", default=None, type=float, help="lr for adam in "
-        )
+        parser.add_argument("--ns_steps", default=10, type=int, help="Number of the NS steps algo")
+        parser.add_argument("--adamw_lr", default=None, type=float, help="lr for adam in ")
     if args1.ft_strategy.lower() in ["simplexlora", "weightlora"]:
-        parser.add_argument(
-            "--k", "--K", default=None, type=int, help="Number of active LoRA adapters"
-        )
+        parser.add_argument("--k", "--K", default=None, type=int, help="Number of active LoRA adapters")
         parser.add_argument(
             "--lr_w",
             "--learning_rate_w",

@@ -1,7 +1,12 @@
+from collections.abc import Callable
+from typing import Protocol, cast
+
 import torch
 import wandb
 import peft
 import datasets
+from peft import PeftMixedModel, PeftModel
+from peft.tuners.lora.layer import LoraLayer
 
 from loguru import logger
 from transformers import (
@@ -9,26 +14,46 @@ from transformers import (
     AutoTokenizer,
     BitsAndBytesConfig,
     DataCollatorForLanguageModeling,
+    PreTrainedModel,
+    PreTrainedTokenizerBase,
     Trainer,
     TrainingArguments,
     pipeline,
 )
 
-from simplexlora import (
-    optimizers,
-    utils
-)
+from simplexlora import optimizers, utils
+from simplexlora.experiments.arguments import as_tokenizer, as_trainer_optimizers
 
-from .data import DatasetRegistry
+from .data import DatasetBuilder, DatasetRegistry
 
 import warnings
+
 warnings.filterwarnings("ignore")
 
 DATASETS = [
-    "aqua", "gsm8k", "commonsensqa", "boolq", "addsub", "multiarith",
-    "singleeq", "strategyqa", "svamp", "bigbench_date", "object_tracking",
-    "coin_flip", "last_letters", "mathqa",  "hella_swag", "arc_challenge",
+    "aqua",
+    "gsm8k",
+    "commonsensqa",
+    "boolq",
+    "addsub",
+    "multiarith",
+    "singleeq",
+    "strategyqa",
+    "svamp",
+    "bigbench_date",
+    "object_tracking",
+    "coin_flip",
+    "last_letters",
+    "mathqa",
+    "hella_swag",
+    "arc_challenge",
 ]
+
+ModelType = PreTrainedModel | PeftModel | PeftMixedModel
+
+
+class TextGenerator(Protocol):
+    def __call__(self, text: str, **kwargs: object) -> list[dict[str, str]]: ...
 
 
 class Finetuner:
@@ -36,9 +61,12 @@ class Finetuner:
 
     def __init__(self, args):
         self.args = args
-        self.model = None
-        self.tokenizer = None
-        self.builder = None
+        self.model: ModelType | None = None
+        self.tokenizer: PreTrainedTokenizerBase | None = None
+        self.builder: DatasetBuilder | None = None
+        self.train_dataset: datasets.Dataset | None = None
+        self.eval_dataset: datasets.Dataset | None = None
+        self.trainer: Trainer | None = None
         self.setup_logging()
         if self.args.wandb:
             self.setup_wandb()
@@ -103,15 +131,18 @@ class Finetuner:
         )
 
         # Load tokenizer
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            self.args.model,
-            use_fast=self.args.use_fast_tokenizer,
-            padding_side=self.args.padding_side,
+        self.tokenizer = as_tokenizer(
+            AutoTokenizer.from_pretrained(
+                self.args.model,
+                use_fast=self.args.use_fast_tokenizer,
+                padding_side=self.args.padding_side,
+            )
         )
         self.tokenizer.pad_token_id = 0
 
         # Resize token embeddings if necessary
-        embedding_size = self.model.get_input_embeddings().weight.shape[0]
+        embeddings = cast(torch.nn.Embedding, self.model.get_input_embeddings())
+        embedding_size = embeddings.weight.shape[0]
         if len(self.tokenizer) > embedding_size:
             self.model.resize_token_embeddings(len(self.tokenizer))
 
@@ -121,15 +152,17 @@ class Finetuner:
         """Setup PEFT (Parameter Efficient Fine-Tuning) adapters"""
         logger.info("Setting up PEFT adapters...")
 
+        model = self.model
+        if model is None:
+            raise RuntimeError("Model must be loaded before configuring PEFT")
+
         peft_args = utils.get_peft_arguments(self.args)
-        peft_args.task_type = "CAUSAL_LM"
         if peft_args is not None:
-            self.model = peft.get_peft_model(self.model, peft_args)
+            peft_args.task_type = "CAUSAL_LM"
+            self.model = peft.get_peft_model(cast(PreTrainedModel, model), peft_args)
 
         # Print trainable parameters info
-        tr_param_count, all_param_count, tr_persent = utils.print_trainable_params(
-            self.model, verbose=True
-        )
+        tr_param_count, all_param_count, tr_persent = utils.print_trainable_params(self.model, verbose=True)
 
         num_peft_adapters = utils.count_atapters(self.model, self.args.ft_strategy)
 
@@ -150,6 +183,8 @@ class Finetuner:
         # Set dataset paths and create builder
         DatasetRegistry.set_dataset_paths(self.args)
         self.builder = DatasetRegistry.create_builder(self.args)
+        if self.builder is None:
+            raise RuntimeError("Dataset builder was not created")
         data = self.builder.get_data()
 
         # Extract train and eval data
@@ -160,7 +195,7 @@ class Finetuner:
         self.train_dataset = None
         self.eval_dataset = None
 
-        if train_questions and len(train_questions) > 0:
+        if train_questions:
             train_dict = {
                 "question": ["Question: " + q for q in train_questions],
                 "response": train_answers,
@@ -169,7 +204,7 @@ class Finetuner:
             }
             self.train_dataset = datasets.Dataset.from_dict(train_dict)
 
-        if eval_questions and len(eval_questions) > 0:
+        if eval_questions:
             eval_dict = {
                 "question": ["Question: " + q for q in eval_questions],
                 "response": eval_answers,
@@ -183,6 +218,8 @@ class Finetuner:
         if self.train_dataset is None:
             logger.warning("No training dataset available")
             return None
+        if self.builder is None or self.tokenizer is None:
+            raise RuntimeError("Dataset builder and tokenizer must be initialized")
 
         logger.info("Preparing training dataset...")
         return self.builder.preprocess_dataset(
@@ -198,6 +235,8 @@ class Finetuner:
         if self.eval_dataset is None:
             logger.warning("No eval dataset for training dataset available")
             return None
+        if self.builder is None or self.tokenizer is None:
+            raise RuntimeError("Dataset builder and tokenizer must be initialized")
 
         logger.info("Preparing evaluation dataset for training...")
         return self.builder.preprocess_dataset(
@@ -213,11 +252,12 @@ class Finetuner:
         if self.eval_dataset is None:
             logger.warning("No evaluation dataset available")
             return None
+        if self.builder is None:
+            raise RuntimeError("Dataset builder must be initialized")
 
         logger.info("Preparing evaluation dataset...")
-        dataset = self.eval_dataset.map(
-            lambda sample: self.builder.create_prompt_formats(sample, eval_mode=True)
-        )
+        builder = self.builder
+        dataset = self.eval_dataset.map(lambda sample: builder.create_prompt_formats(sample, eval_mode=True))
         return dataset
 
     def train(self):
@@ -235,14 +275,15 @@ class Finetuner:
             do_predict=self.args.do_predict,
             per_device_train_batch_size=self.args.batch_size,
             per_device_eval_batch_size=(
-                self.args.eval_batch_size
-                if self.args.eval_batch_size
-                else self.args.batch_size
+                self.args.eval_batch_size if self.args.eval_batch_size else self.args.batch_size
             ),
             gradient_accumulation_steps=self.args.grad_acc_steps,
             lr_scheduler_type=self.args.lr_scheduler_type,
-            warmup_steps=self.args.warmup_steps,
-            warmup_ratio=self.args.warmup_ratio,
+            warmup_steps=(
+                self.args.warmup_steps
+                if self.args.warmup_steps > 0
+                else round(self.args.warmup_ratio * self.args.max_steps_train)
+            ),
             learning_rate=self.args.lr,
             weight_decay=self.args.wd,
             num_train_epochs=self.args.n_epoches_train,
@@ -254,7 +295,6 @@ class Finetuner:
             save_steps=self.args.eval_steps,
             bf16=(self.args.dtype == "bfloat16"),
             fp16=(self.args.dtype == "float16"),
-            logging_dir=f"./src/fine_tuning/llm/{self.args.results_path}/{self.args.run_name}",
             output_dir=f"./src/fine_tuning/llm/{self.args.results_path}/{self.args.run_name}",
             run_name=self.args.run_name,
             report_to=["wandb"] if self.args.wandb else ["none"],
@@ -264,31 +304,39 @@ class Finetuner:
             greater_is_better=self.args.metric_for_best_model not in ["loss"],
         )
 
-        # Prepare datasets
-        if not self.args.do_not_train:
-            train_dataset = self.prepare_training_dataset()
-            if train_dataset is None:
-                logger.error("No training data available, so either skip training (--do_not_train) or provide training data")
-                return
+        model = self.model
+        tokenizer = self.tokenizer
+        if model is None or tokenizer is None:
+            raise RuntimeError("Model and tokenizer must be loaded before training")
 
+        # Prepare datasets
+        train_dataset = self.prepare_training_dataset()
+        if train_dataset is None:
+            logger.error(
+                "No training data available, so either skip training (--do_not_train) or provide training data"
+            )
+            return
+
+        eval_dataset = None
         if not self.args.do_not_eval:
             eval_dataset = self.prepare_evaluation_dataset_for_training()
             if eval_dataset is None:
-                logger.error("No evaluation data available, so either skip evaluation (--do_not_eval) or provide evaluation data")
+                logger.error(
+                    "No evaluation data available, so either skip evaluation (--do_not_eval) or provide evaluation data"
+                )
                 return
-
 
         if self.args.ft_strategy == "SimplexLoRA":
             weight_params = []
             loraAB_params = []
-            lora_layers = []
+            lora_layers: list[LoraLayer] = []
             other_params = []
-            
-            for name, module in self.model.named_modules():
-                if isinstance(module, peft.tuners.lora.layer.LoraLayer):
+
+            for name, module in model.named_modules():
+                if isinstance(module, LoraLayer):
                     lora_layers.append(module)
 
-            for name, param in self.model.named_parameters():
+            for name, param in model.named_parameters():
                 if "lora_A" in name or "lora_B" in name:
                     loraAB_params.append(param)
                 if "lora_weight" in name:
@@ -306,9 +354,7 @@ class Finetuner:
                         "name": "weight_params",
                     },
                 ],
-
                 lora_layers=lora_layers,
-
                 lr=training_args.learning_rate,
                 weight_decay=training_args.weight_decay,
                 num_adapters=len(weight_params),
@@ -319,17 +365,15 @@ class Finetuner:
             )
         else:
             optimizer = torch.optim.AdamW(
-                self.model.parameters(),
-                lr=training_args.learning_rate,
-                weight_decay=training_args.weight_decay
+                model.parameters(), lr=training_args.learning_rate, weight_decay=training_args.weight_decay
             )
         self.trainer = Trainer(
-            model=self.model,
+            model=model,
             train_dataset=train_dataset,
             eval_dataset=eval_dataset,
             args=training_args,
-            data_collator=DataCollatorForLanguageModeling(self.tokenizer, mlm=False),
-            optimizers=[optimizer, None],  # Scheduler will be added in the hf trainer
+            data_collator=DataCollatorForLanguageModeling(tokenizer, mlm=False),
+            optimizers=as_trainer_optimizers(optimizer, None),
         )
 
         # Clean up memory before training
@@ -339,10 +383,13 @@ class Finetuner:
         torch.cuda.empty_cache()
 
         # Train the model
-        train_result = self.trainer.train()
+        trainer = self.trainer
+        if trainer is None:
+            raise RuntimeError("Trainer was not initialized")
+        train_result = trainer.train()
         metrics = train_result.metrics
-        self.trainer.log_metrics("train", metrics)
-        self.trainer.save_metrics("train", metrics)
+        trainer.log_metrics("train", metrics)
+        trainer.save_metrics("train", metrics)
         logger.info(f"Training completed. Metrics: {metrics}")
 
     def evaluate(self):
@@ -360,11 +407,17 @@ class Finetuner:
             logger.error("No evaluation data available")
             return 0, 0
 
+        model = self.model
+        tokenizer = self.tokenizer
+        if model is None or tokenizer is None:
+            raise RuntimeError("Model and tokenizer must be loaded before evaluation")
+
         # Setup text generation pipeline
-        generator = pipeline(
+        pipeline_factory = cast(Callable[..., TextGenerator], pipeline)
+        generator = pipeline_factory(
             "text-generation",
-            model=self.model,
-            tokenizer=self.tokenizer,
+            model=model,
+            tokenizer=tokenizer,
             return_full_text=False,
         )
 
@@ -378,12 +431,10 @@ class Finetuner:
                 # Generate prediction
                 predicted_response = generator(
                     item["text"],
-                    max_new_tokens=len(self.tokenizer.tokenize(item["raw_y"])) + 1,
+                    max_new_tokens=len(tokenizer.tokenize(item["raw_y"])) + 1,
                     num_return_sequences=1,
                 )[0]["generated_text"]
-                predicted_response = predicted_response.replace(" ", "").replace(
-                    "\n", ""
-                )
+                predicted_response = predicted_response.replace(" ", "").replace("\n", "")
                 item["raw_y"] = item["raw_y"].replace(" ", "").replace("\n", "")
                 # Check if correct answer is in prediction
                 if item["raw_y"] in predicted_response:
@@ -397,7 +448,7 @@ class Finetuner:
 
                 # Progress update
                 accuracy = (correct / total) * 100 if total > 0 else 0
-                print(f"[{i+1}/{len(eval_dataset)}] Accuracy: {accuracy:.2f}%")
+                print(f"[{i + 1}/{len(eval_dataset)}] Accuracy: {accuracy:.2f}%")
                 print("=" * 50)
 
             except Exception as e:
@@ -411,7 +462,8 @@ class Finetuner:
         if total > 0:
             final_accuracy = (correct / total) * 100
             logger.info(f"[FINAL] Accuracy: {final_accuracy:.2f}%")
-            self.trainer.save_metrics("eval", {"accuracy": final_accuracy})
+            if self.trainer is not None:
+                self.trainer.save_metrics("eval", {"accuracy": final_accuracy})
             if self.args.wandb:
                 wandb.log({"final_accuracy": final_accuracy})
         else:

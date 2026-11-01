@@ -1,11 +1,32 @@
 import math
 import warnings
+from collections.abc import Callable
 from math import ceil
-from typing import Callable
+from typing import TypedDict, cast, overload
 
 import numpy as np
 import torch
 import torch.optim as optim
+from peft.tuners.lora.layer import LoraLayer
+
+
+Closure = Callable[[], float]
+
+
+class RandParams(TypedDict):
+    compression_rate: float
+
+
+class BanlastParams(RandParams):
+    K: int
+
+
+class KawasakiParams(BanlastParams):
+    b: float
+    proj: Callable[[torch.Tensor], torch.Tensor] | None
+
+
+CompressorParams = RandParams | BanlastParams | KawasakiParams
 
 ############################### torch optimizers ###############################
 """
@@ -39,7 +60,13 @@ class signSGD(optim.Optimizer):
         self.rand_zero = rand_zero
         super(signSGD, self).__init__(params, defaults)
 
-    def step(self, closure=None):
+    @overload
+    def step(self, closure: None = None) -> None: ...
+
+    @overload
+    def step(self, closure: Closure) -> float: ...
+
+    def step(self, closure: Closure | None = None) -> float | None:
         """Performs a single optimization step.
         Arguments:
             closure (callable, optional): A closure that reevaluates the model
@@ -56,9 +83,7 @@ class signSGD(optim.Optimizer):
                 grad = torch.sign(p.grad)
                 # randomise zero gradients to ±1
                 if self.rand_zero:
-                    grad[grad == 0] = (
-                        torch.randint_like(grad[grad == 0], low=0, high=2) * 2 - 1
-                    )
+                    grad[grad == 0] = torch.randint_like(grad[grad == 0], low=0, high=2) * 2 - 1
                     assert not (grad == 0).any()
                 # make update
                 p.data -= group["lr"] * grad
@@ -79,19 +104,17 @@ class signAdamW(optim.Optimizer):
     ):
         if not no_deprecation_warning:
             warnings.warn(
+                "This optimizer is deprecated.",
                 FutureWarning,
+                stacklevel=2,
             )
         # require_version("torch>=1.5.0")  # add_ with alpha
         if lr < 0.0:
             raise ValueError(f"Invalid learning rate: {lr} - should be >= 0.0")
         if not 0.0 <= betas[0] < 1.0:
-            raise ValueError(
-                f"Invalid beta parameter: {betas[0]} - should be in [0.0, 1.0)"
-            )
+            raise ValueError(f"Invalid beta parameter: {betas[0]} - should be in [0.0, 1.0)")
         if not 0.0 <= betas[1] < 1.0:
-            raise ValueError(
-                f"Invalid beta parameter: {betas[1]} - should be in [0.0, 1.0)"
-            )
+            raise ValueError(f"Invalid beta parameter: {betas[1]} - should be in [0.0, 1.0)")
         if not 0.0 <= eps:
             raise ValueError(f"Invalid epsilon value: {eps} - should be >= 0.0")
         defaults = {
@@ -104,8 +127,14 @@ class signAdamW(optim.Optimizer):
         self.rand_zero = rand_zero
         super().__init__(params, defaults)
 
+    @overload
+    def step(self, closure: None = None) -> None: ...
+
+    @overload
+    def step(self, closure: Closure) -> float: ...
+
     @torch.no_grad()
-    def step(self, closure: Callable = None):
+    def step(self, closure: Closure | None = None) -> float | None:
         loss = None
         if closure is not None:
             loss = closure()
@@ -119,15 +148,11 @@ class signAdamW(optim.Optimizer):
                 grad = torch.sign(p.grad)
                 # randomise zero gradients to ±1
                 if self.rand_zero:
-                    grad[grad == 0] = (
-                        torch.randint_like(grad[grad == 0], low=0, high=2) * 2 - 1
-                    )
+                    grad[grad == 0] = torch.randint_like(grad[grad == 0], low=0, high=2) * 2 - 1
                     assert not (grad == 0).any()
                 ################################################################
                 if grad.is_sparse:
-                    raise RuntimeError(
-                        "Adam does not support sparse gradients, please consider SparseAdam instead"
-                    )
+                    raise RuntimeError("Adam does not support sparse gradients, please consider SparseAdam instead")
 
                 state = self.state[p]
 
@@ -154,9 +179,7 @@ class signAdamW(optim.Optimizer):
                 if group["correct_bias"]:  # No bias correction for Bert
                     bias_correction1 = 1.0 - beta1 ** state["step"]
                     bias_correction2 = 1.0 - beta2 ** state["step"]
-                    step_size = (
-                        step_size * math.sqrt(bias_correction2) / bias_correction1
-                    )
+                    step_size = step_size * math.sqrt(bias_correction2) / bias_correction1
 
                 p.addcdiv_(exp_avg, denom, value=-step_size)
 
@@ -209,13 +232,9 @@ class AdamW(optim.Optimizer):
         if lr < 0.0:
             raise ValueError(f"Invalid learning rate: {lr} - should be >= 0.0")
         if not 0.0 <= betas[0] < 1.0:
-            raise ValueError(
-                f"Invalid beta parameter: {betas[0]} - should be in [0.0, 1.0)"
-            )
+            raise ValueError(f"Invalid beta parameter: {betas[0]} - should be in [0.0, 1.0)")
         if not 0.0 <= betas[1] < 1.0:
-            raise ValueError(
-                f"Invalid beta parameter: {betas[1]} - should be in [0.0, 1.0)"
-            )
+            raise ValueError(f"Invalid beta parameter: {betas[1]} - should be in [0.0, 1.0)")
         if not 0.0 <= eps:
             raise ValueError(f"Invalid epsilon value: {eps} - should be >= 0.0")
         defaults = {
@@ -227,8 +246,14 @@ class AdamW(optim.Optimizer):
         }
         super().__init__(params, defaults)
 
+    @overload
+    def step(self, closure: None = None) -> None: ...
+
+    @overload
+    def step(self, closure: Closure) -> float: ...
+
     @torch.no_grad()
-    def step(self, closure: Callable = None):
+    def step(self, closure: Closure | None = None) -> float | None:
         """
         Performs a single optimization step.
 
@@ -245,9 +270,7 @@ class AdamW(optim.Optimizer):
                     continue
                 grad = p.grad
                 if grad.is_sparse:
-                    raise RuntimeError(
-                        "Adam does not support sparse gradients, please consider SparseAdam instead"
-                    )
+                    raise RuntimeError("Adam does not support sparse gradients, please consider SparseAdam instead")
 
                 state = self.state[p]
 
@@ -274,9 +297,7 @@ class AdamW(optim.Optimizer):
                 if group["correct_bias"]:  # No bias correction for Bert
                     bias_correction1 = 1.0 - beta1 ** state["step"]
                     bias_correction2 = 1.0 - beta2 ** state["step"]
-                    step_size = (
-                        step_size * math.sqrt(bias_correction2) / bias_correction1
-                    )
+                    step_size = step_size * math.sqrt(bias_correction2) / bias_correction1
 
                 p.addcdiv_(exp_avg, denom, value=-step_size)
 
@@ -300,7 +321,13 @@ class SGD(optim.Optimizer):
         defaults = dict(lr=lr)
         super(SGD, self).__init__(params, defaults)
 
-    def step(self, closure: Callable = None):
+    @overload
+    def step(self, closure: None = None) -> None: ...
+
+    @overload
+    def step(self, closure: Closure) -> float: ...
+
+    def step(self, closure: Closure | None = None) -> float | None:
         loss = None
         if closure is not None:
             loss = closure()
@@ -319,7 +346,13 @@ class StoIHT(optim.Optimizer):
         defaults = dict(lr=lr, approx=approx, proj=proj, k=k, prob=prob)
         super(StoIHT, self).__init__(params, defaults)
 
-    def step(self, closure: Callable = None):
+    @overload
+    def step(self, closure: None = None) -> None: ...
+
+    @overload
+    def step(self, closure: Closure) -> float: ...
+
+    def step(self, closure: Closure | None = None) -> float | None:
         loss = None
         if closure is not None:
             loss = closure()
@@ -356,28 +389,34 @@ def approx_0(x, k):
 def proj_0_old(x, mask):
     return x.mul(mask)
 
+
 def proj_0(x: torch.Tensor, K: int):
     _, idx = torch.topk(x, k=x.shape[0] - K, largest=False)
     x[idx] = 0.0
     return x
 
+
 def proj_simplex_softmax(x: torch.Tensor, temp=1.0):
     x_0 = (x - x.max()) / temp
     return torch.exp(x_0) / torch.exp(x_0).sum()
+
 
 def proj_simplex_weighted_softmax(x: torch.Tensor, temp=1.0):
     x_0 = (x - x.max()) / temp
     return (torch.exp(x_0) * x) / (torch.exp(x_0) * x).sum()
 
+
 def proj_simplex_euclidean(x: torch.Tensor, temp=None, tau=0.0001, max_iter=1000):
-    '''
+    """
     Bisection for projection onto the simplex
     FROM: http://www.mblondel.org/publications/mblondel-icpr2014.pdf
     temp is not used!
-    '''
+    """
     null = torch.Tensor([0]).to(x.device)
+
     def func(k):
         return torch.sum(torch.maximum(x - k, null)) - 1
+
     lower = torch.min(x) - 1 / len(x)
     upper = torch.max(x)
 
@@ -395,6 +434,7 @@ def proj_simplex_euclidean(x: torch.Tensor, temp=None, tau=0.0001, max_iter=1000
 
     ans = torch.maximum(x - midpoint, null)
     return ans / torch.sum(ans)
+
 
 class SimplexAdamW(optim.Optimizer):
     """
@@ -420,7 +460,7 @@ class SimplexAdamW(optim.Optimizer):
     def __init__(
         self,
         params,
-        lora_layers: list[torch.nn.Module],
+        lora_layers: list[LoraLayer],
         lr: float = 1e-3,
         betas: tuple[float, float] = (0.9, 0.999),
         eps: float = 1e-6,
@@ -431,7 +471,7 @@ class SimplexAdamW(optim.Optimizer):
         lora_extention: str = "smart",
         fat_step: int = 10,
         max_fat_steps: int = 3,
-        default_lora_rank: int = 16
+        default_lora_rank: int = 16,
     ):
         if not no_deprecation_warning:
             warnings.warn(
@@ -450,7 +490,7 @@ class SimplexAdamW(optim.Optimizer):
             raise ValueError(f"Invalid beta parameter: {betas[1]} - should be in [0.0, 1.0)")
         if not 0.0 <= eps:
             raise ValueError(f"Invalid epsilon value: {eps} - should be >= 0.0")
-        
+
         defaults = {"lr": lr, "betas": betas, "eps": eps, "weight_decay": weight_decay, "correct_bias": correct_bias}
         super().__init__(params, defaults)
 
@@ -459,7 +499,7 @@ class SimplexAdamW(optim.Optimizer):
         self.temp = 1
         self.num_adapters = num_adapters
         self.chosen_layers = list(range(num_adapters))
-        self.lora_ranks = [default_lora_rank] * num_adapters
+        self.lora_ranks = torch.full((num_adapters,), default_lora_rank, dtype=torch.int)
         self.default_lora_rank = default_lora_rank
 
         if lora_extention not in ["smart"]:
@@ -469,8 +509,14 @@ class SimplexAdamW(optim.Optimizer):
         self.fat_step = fat_step
         self.max_fat_steps = max_fat_steps
 
+    @overload
+    def step(self, closure: None = None) -> None: ...
+
+    @overload
+    def step(self, closure: Closure) -> float: ...
+
     @torch.no_grad()
-    def step(self, closure: Callable = None):
+    def step(self, closure: Closure | None = None) -> float | None:
         """
         Performs a single optimization step.
 
@@ -480,7 +526,7 @@ class SimplexAdamW(optim.Optimizer):
         loss = None
         if closure is not None:
             loss = closure()
- 
+
         ######################## StoIHT step for lora weights #########################
         if self.max_fat_steps > 0:
             # weight_params group
@@ -488,20 +534,19 @@ class SimplexAdamW(optim.Optimizer):
 
             w_vector_old = []
 
-            if "w_step" not in group.keys(): 
+            if "w_step" not in group.keys():
                 group["w_step"] = 0
             group["w_step"] += 1
-            
+
             for i, p in enumerate(group["params"]):
                 if p.grad is None or i not in self.chosen_layers:
                     continue
 
-                p.add_(p.grad, alpha=-group['lr'])
+                p.add_(p.grad, alpha=-group["lr"])
                 if group["wd"] > 0.0:
                     p.add_(p - 1, alpha=(-group["lr"] * group["wd"]))
 
                 w_vector_old.append(p.data.item())
-
 
             if group["w_step"] % self.fat_step == 0:
                 w_vector_old = torch.tensor(w_vector_old)
@@ -535,7 +580,7 @@ class SimplexAdamW(optim.Optimizer):
                         new_lora_weights_nonzero.append(w_vector[j])
                         new_lora_ranks_nonzero.append(new_lora_ranks_all[j])
                         new_chosen_layers.append(i)
-                        
+
                     j += 1
 
                 self.chosen_layers = new_chosen_layers
@@ -544,14 +589,14 @@ class SimplexAdamW(optim.Optimizer):
                 print("New chosen layers:", self.chosen_layers)
 
         ####################################################################
-        
+
         lora_rank_update = False
 
         ############################ Adam Step for all (lora also) other layers #############################
         for group in self.param_groups:
             if group["name"] == "weight_params":
                 continue
-            
+
             for i, p in enumerate(group["params"]):
                 if p.grad is None:
                     continue
@@ -567,7 +612,7 @@ class SimplexAdamW(optim.Optimizer):
                     # Exponential moving average of gradient values
                     state["exp_avg"] = torch.zeros_like(p)
                     # Exponential moving average of squared gradient values
-                    state["exp_avg_sq"] = torch.zeros_like(p)       
+                    state["exp_avg_sq"] = torch.zeros_like(p)
 
                 exp_avg, exp_avg_sq = state["exp_avg"], state["exp_avg_sq"]
                 beta1, beta2 = group["betas"]
@@ -607,39 +652,45 @@ class SimplexAdamW(optim.Optimizer):
         ############################ Rank update for lor a layers #############################
         if not lora_rank_update:
             return loss
-        
+
         self.max_fat_steps -= 1
 
         for j, layer_idx in enumerate(self.chosen_layers):
             layer = self.lora_layers[layer_idx]
             adapter_name = layer._active_adapter[0]
+            rank = int(self.lora_ranks[j].item())
 
             if self.max_fat_steps == 0:
-                layer._final_lora_rank_update(self.lora_ranks[j], adapter_name)
-                
+                layer._final_lora_rank_update(rank, adapter_name)
+
                 group = list(filter(lambda group: group["name"] == "loraAB", self.param_groups))[0]
-                group["params"][2 * layer_idx] = layer.lora_A[adapter_name].weight
-                group["params"][2 * layer_idx + 1] = layer.lora_B[adapter_name].weight
+                lora_a_layer = cast(torch.nn.Linear, layer.lora_A[adapter_name])
+                lora_b_layer = cast(torch.nn.Linear, layer.lora_B[adapter_name])
+                group["params"][2 * layer_idx] = lora_a_layer.weight
+                group["params"][2 * layer_idx + 1] = lora_b_layer.weight
 
             else:
-                layer._update_lora_rank_QR(self.lora_ranks[j], adapter_name)
-                
-                group = list(filter(lambda group: group["name"] == "loraAB", self.param_groups))[0]
-                group["params"][2 * layer_idx] = layer.lora_A[adapter_name].weight
-                group["params"][2 * layer_idx + 1] = layer.lora_B[adapter_name].weight
+                layer._update_lora_rank_QR(rank, adapter_name)
 
-            lora_A = layer.lora_A[adapter_name].weight
-            lora_B = layer.lora_B[adapter_name].weight
-            
+                group = list(filter(lambda group: group["name"] == "loraAB", self.param_groups))[0]
+                lora_a_layer = cast(torch.nn.Linear, layer.lora_A[adapter_name])
+                lora_b_layer = cast(torch.nn.Linear, layer.lora_B[adapter_name])
+                group["params"][2 * layer_idx] = lora_a_layer.weight
+                group["params"][2 * layer_idx + 1] = lora_b_layer.weight
+
+            lora_A = lora_a_layer.weight
+            lora_B = lora_b_layer.weight
+
             self.state[lora_A]["step"] = 0
             self.state[lora_A]["exp_avg"] = torch.zeros_like(lora_A)
-            self.state[lora_A]["exp_avg_sq"] = torch.zeros_like(lora_A) 
+            self.state[lora_A]["exp_avg_sq"] = torch.zeros_like(lora_A)
 
             self.state[lora_B]["step"] = 0
             self.state[lora_B]["exp_avg"] = torch.zeros_like(lora_B)
-            self.state[lora_B]["exp_avg_sq"] = torch.zeros_like(lora_B) 
+            self.state[lora_B]["exp_avg_sq"] = torch.zeros_like(lora_B)
 
         return loss
+
 
 class WeightAdamW(optim.Optimizer):
     """
@@ -683,13 +734,9 @@ class WeightAdamW(optim.Optimizer):
         if lr < 0.0:
             raise ValueError(f"Invalid learning rate: {lr} - should be >= 0.0")
         if not 0.0 <= betas[0] < 1.0:
-            raise ValueError(
-                f"Invalid beta parameter: {betas[0]} - should be in [0.0, 1.0)"
-            )
+            raise ValueError(f"Invalid beta parameter: {betas[0]} - should be in [0.0, 1.0)")
         if not 0.0 <= betas[1] < 1.0:
-            raise ValueError(
-                f"Invalid beta parameter: {betas[1]} - should be in [0.0, 1.0)"
-            )
+            raise ValueError(f"Invalid beta parameter: {betas[1]} - should be in [0.0, 1.0)")
         if not 0.0 <= eps:
             raise ValueError(f"Invalid epsilon value: {eps} - should be >= 0.0")
         defaults = {
@@ -701,8 +748,14 @@ class WeightAdamW(optim.Optimizer):
         }
         super().__init__(params, defaults)
 
+    @overload
+    def step(self, closure: None = None) -> None: ...
+
+    @overload
+    def step(self, closure: Closure) -> float: ...
+
     @torch.no_grad()
-    def step(self, closure: Callable = None):
+    def step(self, closure: Closure | None = None) -> float | None:
         """
         Performs a single optimization step.
 
@@ -747,9 +800,7 @@ class WeightAdamW(optim.Optimizer):
                     if group["correct_bias"]:  # No bias correction for Bert
                         bias_correction1 = 1.0 - beta1 ** state["step"]
                         bias_correction2 = 1.0 - beta2 ** state["step"]
-                        step_size = (
-                            step_size * math.sqrt(bias_correction2) / bias_correction1
-                        )
+                        step_size = step_size * math.sqrt(bias_correction2) / bias_correction1
 
                     p.addcdiv_(exp_avg, denom, value=-step_size)
                     if group["weight_decay"] > 0.0:
@@ -771,7 +822,7 @@ class WeightAdamW(optim.Optimizer):
                         w_grad.append(p.grad.item())
                         w_vector.append(p.data.item())
                         do_proj = True
-                
+
                 if do_proj:
                     j = 0
                     w_grad = torch.tensor(w_grad)
@@ -833,13 +884,9 @@ class WeightAdamW_old(optim.Optimizer):
         if lr < 0.0:
             raise ValueError(f"Invalid learning rate: {lr} - should be >= 0.0")
         if not 0.0 <= betas[0] < 1.0:
-            raise ValueError(
-                f"Invalid beta parameter: {betas[0]} - should be in [0.0, 1.0)"
-            )
+            raise ValueError(f"Invalid beta parameter: {betas[0]} - should be in [0.0, 1.0)")
         if not 0.0 <= betas[1] < 1.0:
-            raise ValueError(
-                f"Invalid beta parameter: {betas[1]} - should be in [0.0, 1.0)"
-            )
+            raise ValueError(f"Invalid beta parameter: {betas[1]} - should be in [0.0, 1.0)")
         if not 0.0 <= eps:
             raise ValueError(f"Invalid epsilon value: {eps} - should be >= 0.0")
         defaults = {
@@ -855,8 +902,14 @@ class WeightAdamW_old(optim.Optimizer):
         self.calculate_w_step = calculate_w_step
         super().__init__(params, defaults)
 
+    @overload
+    def step(self, closure: None = None) -> None: ...
+
+    @overload
+    def step(self, closure: Closure) -> float: ...
+
     @torch.no_grad()
-    def step(self, closure: Callable = None):
+    def step(self, closure: Closure | None = None) -> float | None:
         """
         Performs a single optimization step.
 
@@ -884,9 +937,7 @@ class WeightAdamW_old(optim.Optimizer):
                 if grad.norm() > 0:
                     sum += 1
                 if grad.is_sparse:
-                    raise RuntimeError(
-                        "Adam does not support sparse gradients, please consider SparseAdam instead"
-                    )
+                    raise RuntimeError("Adam does not support sparse gradients, please consider SparseAdam instead")
 
                 state = self.state[p]
                 # State initialization
@@ -910,9 +961,7 @@ class WeightAdamW_old(optim.Optimizer):
                 if group["correct_bias"]:  # No bias correction for Bert
                     bias_correction1 = 1.0 - beta1 ** state["step"]
                     bias_correction2 = 1.0 - beta2 ** state["step"]
-                    step_size = (
-                        step_size * math.sqrt(bias_correction2) / bias_correction1
-                    )
+                    step_size = step_size * math.sqrt(bias_correction2) / bias_correction1
 
                 p.addcdiv_(exp_avg, denom, value=-step_size)
                 if group["weight_decay"] > 0.0:
@@ -943,7 +992,9 @@ class WeightAdamW_old(optim.Optimizer):
 
 
 class Rand:
-    def __init__(self, compressor_params: dict = {"compression_rate": 0.1}) -> None:
+    def __init__(self, compressor_params: RandParams | None = None) -> None:
+        if compressor_params is None:
+            compressor_params = {"compression_rate": 0.1}
         self.compression_rate = compressor_params["compression_rate"]
         self.used_coordinates = []
         self.K = 0
@@ -964,7 +1015,9 @@ class Rand:
 
 
 class Banlast(Rand):
-    def __init__(self, compressor_params: dict = {"compression_rate": 0.1, "K": 7}):
+    def __init__(self, compressor_params: BanlastParams | None = None) -> None:
+        if compressor_params is None:
+            compressor_params = {"compression_rate": 0.1, "K": 7}
         super().__init__(compressor_params)
         self.K = compressor_params["K"]
 
@@ -979,13 +1032,15 @@ class Banlast(Rand):
 class KAWASAKI(Rand):
     def __init__(
         self,
-        compressor_params: dict = {
-            "compression_rate": 0.1,
-            "K": 7,
-            "b": 2.0,
-            "proj": None,
-        },
-    ):
+        compressor_params: KawasakiParams | None = None,
+    ) -> None:
+        if compressor_params is None:
+            compressor_params = {
+                "compression_rate": 0.1,
+                "K": 7,
+                "b": 2.0,
+                "proj": None,
+            }
         super().__init__(compressor_params)
         self.K = compressor_params["K"]
         self.b = compressor_params["b"]
@@ -993,9 +1048,7 @@ class KAWASAKI(Rand):
 
     def get_probs(self, x: torch.Tensor):
         probs = torch.ones_like(x)
-        num_used_coordinates = torch.Tensor(
-            [self.used_coordinates.count(i) for i in range(x.shape[0])]
-        ).to(x.device)
+        num_used_coordinates = torch.Tensor([self.used_coordinates.count(i) for i in range(x.shape[0])]).to(x.device)
         probs /= self.b**num_used_coordinates
         if self.proj is not None:
             probs = self.proj(probs)
@@ -1004,18 +1057,28 @@ class KAWASAKI(Rand):
 
 class QSGD(optim.Optimizer):
     def __init__(
-        self, params, lr=0.01, compression_name: str = None, compressor_params=None
+        self,
+        params,
+        lr: float = 0.01,
+        compression_name: str | None = None,
+        compressor_params: CompressorParams | None = None,
     ):
         if lr < 0.0:
             raise ValueError("Invalid learning rate: {}".format(lr))
         defaults = dict(lr=lr)
-        super(QSGD, self).__init__(params, defaults)
+        super().__init__(params, defaults)
         if compression_name not in ["Rand", "BanLast", "KAWASAKI", None]:
             raise ValueError(f"Wrong compression name {compression_name}")
         self.compression_name = compression_name
         self.compressor_params = compressor_params
 
-    def step(self, closure: Callable = None):
+    @overload
+    def step(self, closure: None = None) -> None: ...
+
+    @overload
+    def step(self, closure: Closure) -> float: ...
+
+    def step(self, closure: Closure | None = None) -> float | None:
         loss = None
         if closure is not None:
             loss = closure()
@@ -1028,9 +1091,9 @@ class QSGD(optim.Optimizer):
                     if self.compression_name == "Rand":
                         state["compressor"] = Rand(self.compressor_params)
                     elif self.compression_name == "BanLast":
-                        state["compressor"] = Banlast(self.compressor_params)
+                        state["compressor"] = Banlast(cast(BanlastParams | None, self.compressor_params))
                     elif self.compression_name == "KAWASAKI":
-                        state["compressor"] = KAWASAKI(self.compressor_params)
+                        state["compressor"] = KAWASAKI(cast(KawasakiParams | None, self.compressor_params))
                     else:
                         state["compressor"] = None
                 if state["compressor"] is not None:

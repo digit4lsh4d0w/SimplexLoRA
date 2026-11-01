@@ -12,9 +12,15 @@ from transformers import (
     AutoConfig,
 )
 
+from ..arguments import as_metric, as_tokenizer
+
 logger = logging.getLogger(__name__)
 
+
 def glue_preprocess(data_args, training_args, model_args):
+    model_id = model_args.model_name_or_path
+    if model_id is None:
+        raise ValueError("model_name_or_path is required")
     task_to_keys = {
         "cola": ("sentence", None),
         "mnli": ("premise", "hypothesis"),
@@ -31,14 +37,14 @@ def glue_preprocess(data_args, training_args, model_args):
         datasets = load_dataset("glue", data_args.task_name)
     else:
         raise RuntimeError("Pass the data_args.task_name !!!")
-    
+
     is_regression = data_args.task_name == "stsb"
     if not is_regression:
         label_list = datasets["train"].features["label"].names
         num_labels = len(label_list)
     else:
         num_labels = 1
-    
+
     # Preprocessing the datasets
     sentence1_key, sentence2_key = task_to_keys[data_args.task_name]
 
@@ -51,45 +57,46 @@ def glue_preprocess(data_args, training_args, model_args):
 
     config = AutoConfig.from_pretrained(
         model_args.config_name if model_args.config_name else model_args.model_name_or_path,
-        num_labels=num_labels,
-        finetuning_task=data_args.task_name,
         cache_dir=model_args.cache_dir,
         revision=model_args.model_revision,
         use_auth_token=True if model_args.use_auth_token else None,
     )
-    tokenizer = AutoTokenizer.from_pretrained(
-        model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
-        cache_dir=model_args.cache_dir,
-        use_fast=model_args.use_fast_tokenizer,
-        revision=model_args.model_revision,
-        use_auth_token=True if model_args.use_auth_token else None,
+    config.num_labels = num_labels
+    config.finetuning_task = data_args.task_name
+    tokenizer = as_tokenizer(
+        AutoTokenizer.from_pretrained(
+            model_args.tokenizer_name if model_args.tokenizer_name else model_id,
+            cache_dir=model_args.cache_dir,
+            use_fast=model_args.use_fast_tokenizer,
+            revision=model_args.model_revision,
+            use_auth_token=True if model_args.use_auth_token else None,
+        )
     )
 
     model = AutoModelForSequenceClassification.from_pretrained(
-        model_args.model_name_or_path,
-        from_tf=bool(".ckpt" in model_args.model_name_or_path),
+        model_id,
+        from_tf=bool(".ckpt" in model_id),
         config=config,
         cache_dir=model_args.cache_dir,
         revision=model_args.model_revision,
         use_auth_token=True if model_args.use_auth_token else None,
     )
-    print(f'model is {model_args.model_name_or_path}, {bool(".ckpt" in model_args.model_name_or_path)}')
+    print(f"model is {model_id}, {bool('.ckpt' in model_id)}")
 
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
         model.config.pad_token_id = tokenizer.eos_token_id
     # Some models have set the order of the labels to use, so let's make sure we do use it.
     label_to_id = None
-    if (
-        model.config.label2id != PretrainedConfig(num_labels=num_labels).label2id
-        and not is_regression
-    ):
+    reference_config = PretrainedConfig()
+    reference_config.num_labels = num_labels
+    if model.config.label2id != reference_config.label2id and not is_regression:
         # Some have all caps in their config, some don't.
         label_name_to_id = {k.lower(): v for k, v in model.config.label2id.items()}
         if list(sorted(label_name_to_id.keys())) == list(sorted(label_list)):
             label_to_id = {i: int(label_name_to_id[label_list[i]]) for i in range(num_labels)}
         else:
-            logger.warn(
+            logger.warning(
                 "Your model seems to have been trained with labels, but they don't match the dataset: ",
                 f"model labels: {list(sorted(label_name_to_id.keys()))}, dataset labels: {list(sorted(label_list))}."
                 "\nIgnoring the model labels as a result.",
@@ -98,11 +105,12 @@ def glue_preprocess(data_args, training_args, model_args):
         label_to_id = {v: i for i, v in enumerate(label_list)}
 
     if data_args.max_seq_length > tokenizer.model_max_length:
-        logger.warn(
+        logger.warning(
             f"The max_seq_length passed ({data_args.max_seq_length}) is larger than the maximum length for the"
             f"model ({tokenizer.model_max_length}). Using max_seq_length={tokenizer.model_max_length}."
         )
     max_seq_length = min(data_args.max_seq_length, tokenizer.model_max_length)
+
     def preprocess_function(examples):
         # Tokenize the texts
         args = (
@@ -112,17 +120,10 @@ def glue_preprocess(data_args, training_args, model_args):
 
         # Map labels to IDs (not necessary for GLUE tasks)
         if label_to_id is not None and "label" in examples:
-            result["label"] = [
-                (label_to_id[label] if label != -1 else -1)
-                for label in examples["label"]
-            ]
+            result["label"] = [(label_to_id[label] if label != -1 else -1) for label in examples["label"]]
         return result
 
-    datasets = datasets.map(
-        preprocess_function, 
-        batched=True, 
-        load_from_cache_file=not data_args.overwrite_cache
-    )
+    datasets = datasets.map(preprocess_function, batched=True, load_from_cache_file=not data_args.overwrite_cache)
     train_dataset = None
     if training_args.do_train:
         if "train" not in datasets:
@@ -138,7 +139,7 @@ def glue_preprocess(data_args, training_args, model_args):
         eval_dataset = datasets["validation_matched" if data_args.task_name == "mnli" else "validation"]
         if data_args.max_val_samples is not None:
             eval_dataset = eval_dataset.select(range(data_args.max_val_samples))
-    
+
     test_dataset = None
     if training_args.do_predict or data_args.task_name is not None or data_args.test_file is not None:
         if "test" not in datasets and "test_matched" not in datasets:
@@ -146,9 +147,10 @@ def glue_preprocess(data_args, training_args, model_args):
         test_dataset = datasets["test_matched" if data_args.task_name == "mnli" else "test"]
         if data_args.max_test_samples is not None:
             test_dataset = test_dataset.select(range(data_args.max_test_samples))
-    
+
     # Get the metric function
-    metric = load("glue", data_args.task_name)
+    metric = as_metric(load("glue", data_args.task_name))
+
     def compute_metrics(p: EvalPrediction):
         preds = p.predictions[0] if isinstance(p.predictions, tuple) else p.predictions
         preds = np.squeeze(preds) if is_regression else np.argmax(preds, axis=1)
@@ -170,12 +172,12 @@ def glue_preprocess(data_args, training_args, model_args):
         data_collator = None
 
     return (
-        train_dataset, 
+        train_dataset,
         eval_dataset,
         test_dataset,
-        datasets, 
-        data_collator, 
-        compute_metrics, 
-        model, 
+        datasets,
+        data_collator,
+        compute_metrics,
+        model,
         tokenizer,
     )

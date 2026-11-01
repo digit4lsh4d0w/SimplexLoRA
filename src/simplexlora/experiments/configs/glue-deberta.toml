@@ -54,7 +54,8 @@ lora_r = [1, 2, 4, 8]
 seed = [18, 52, 1917]
 
 [experiment.arguments]
-learning_rate = "tuned"
+learning_rate = 8e-4
+use_tuned_learning_rate = true
 warmup_steps = 100
 num_train_epochs = 30
 eval_strategy = "epoch"

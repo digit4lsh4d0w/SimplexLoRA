@@ -2,11 +2,13 @@ import collections
 import json
 import logging
 import os
+from typing import cast
 
 import numpy as np
-from datasets import load_dataset
+from datasets import Dataset, load_dataset
 from evaluate import load
 from typing import Optional, Tuple
+from torch.utils.data import Dataset as TorchDataset
 from tqdm.auto import tqdm
 
 from transformers import (
@@ -17,11 +19,20 @@ from transformers import (
     AutoTokenizer,
     AutoConfig,
     PreTrainedTokenizerFast,
-    Trainer
+    Trainer,
 )
 from transformers.trainer_utils import PredictionOutput
 
+from ..arguments import as_metric, as_tokenizer
+
 logger = logging.getLogger(__name__)
+
+
+def _json_prediction_value(value: object) -> object:
+    if isinstance(value, (np.float16, np.float32, np.float64)):
+        return float(cast(float, value))
+    return value
+
 
 def postprocess_qa_predictions(
     examples,
@@ -154,49 +165,56 @@ def postprocess_qa_predictions(
             null_score = min_null_prediction["score"]
 
         # Only keep the best `n_best_size` predictions.
-        predictions = sorted(prelim_predictions, key=lambda x: x["score"], reverse=True)[:n_best_size]
+        best_predictions = sorted(prelim_predictions, key=lambda x: x["score"], reverse=True)[:n_best_size]
 
         # Add back the minimum null prediction if it was removed because of its low score.
         if (
             version_2_with_negative
             and min_null_prediction is not None
-            and not any(p["offsets"] == (0, 0) for p in predictions)
+            and not any(p["offsets"] == (0, 0) for p in best_predictions)
         ):
-            predictions.append(min_null_prediction)
+            best_predictions.append(min_null_prediction)
 
         # Use the offsets to gather the answer text in the original context.
         context = example["context"]
-        for pred in predictions:
+        for pred in best_predictions:
             offsets = pred.pop("offsets")
             pred["text"] = context[offsets[0] : offsets[1]]
 
         # In the very rare edge case we have not a single non-null prediction, we create a fake prediction to avoid
         # failure.
-        if len(predictions) == 0 or (len(predictions) == 1 and predictions[0]["text"] == ""):
-            predictions.insert(0, {"text": "empty", "start_logit": 0.0, "end_logit": 0.0, "score": 0.0})
+        if len(best_predictions) == 0 or (len(best_predictions) == 1 and best_predictions[0]["text"] == ""):
+            best_predictions.insert(
+                0,
+                {"text": "empty", "start_logit": 0.0, "end_logit": 0.0, "score": 0.0},
+            )
 
         # Compute the softmax of all scores (we do it with numpy to stay independent from torch/tf in this file, using
         # the LogSumExp trick).
-        scores = np.array([pred.pop("score") for pred in predictions])
+        scores = np.array([pred.pop("score") for pred in best_predictions])
         exp_scores = np.exp(scores - np.max(scores))
         probs = exp_scores / exp_scores.sum()
 
         # Include the probabilities in our predictions.
-        for prob, pred in zip(probs, predictions):
+        for prob, pred in zip(probs, best_predictions, strict=True):
             pred["probability"] = prob
 
         # Pick the best prediction. If the null answer is not possible, this is easy.
         if not version_2_with_negative:
-            all_predictions[example["id"]] = predictions[0]["text"]
+            all_predictions[example["id"]] = best_predictions[0]["text"]
         else:
             # Otherwise we first need to find the best non-empty prediction.
             i = 0
-            while predictions[i]["text"] == "":
+            while best_predictions[i]["text"] == "":
                 i += 1
-            best_non_null_pred = predictions[i]
+            best_non_null_pred = best_predictions[i]
 
             # Then we compare to the null prediction using the threshold.
-            score_diff = null_score - best_non_null_pred["start_logit"] - best_non_null_pred["end_logit"]
+            score_diff = (
+                float(cast(float, null_score))
+                - float(cast(float, best_non_null_pred["start_logit"]))
+                - float(cast(float, best_non_null_pred["end_logit"]))
+            )
             scores_diff_json[example["id"]] = float(score_diff)  # To be JSON-serializable.
             if score_diff > null_score_diff_threshold:
                 all_predictions[example["id"]] = ""
@@ -205,8 +223,7 @@ def postprocess_qa_predictions(
 
         # Make `predictions` JSON-serializable by casting np.float back to float.
         all_nbest_json[example["id"]] = [
-            {k: (float(v) if isinstance(v, (np.float16, np.float32, np.float64)) else v) for k, v in pred.items()}
-            for pred in predictions
+            {k: _json_prediction_value(v) for k, v in pred.items()} for pred in best_predictions
         ]
 
     # If we have an output_dir, let's save all those dicts.
@@ -233,7 +250,11 @@ def postprocess_qa_predictions(
                 json.dump(scores_diff_json, writer, indent=4)
     return all_predictions
 
+
 def squad_preprocess(data_args, training_args, model_args):
+    model_id = model_args.model_name_or_path
+    if model_id is None:
+        raise ValueError("model_name_or_path is required")
     if data_args.dataset_name is not None:
         # Downloading and loading a dataset from the hub.
         raw_datasets = load_dataset(
@@ -269,17 +290,19 @@ def squad_preprocess(data_args, training_args, model_args):
         reg_loss_wgt=model_args.reg_loss_wgt,
         masking_prob=model_args.masking_prob,
     )
-    tokenizer = AutoTokenizer.from_pretrained(
-        model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
-        cache_dir=model_args.cache_dir,
-        use_fast=True,
-        revision=model_args.model_revision,
-        use_auth_token=True if model_args.use_auth_token else None,
-        cls_token="[CLS]",
+    tokenizer = as_tokenizer(
+        AutoTokenizer.from_pretrained(
+            model_args.tokenizer_name if model_args.tokenizer_name else model_id,
+            cache_dir=model_args.cache_dir,
+            use_fast=True,
+            revision=model_args.model_revision,
+            use_auth_token=True if model_args.use_auth_token else None,
+            cls_token="[CLS]",
+        )
     )
     model = AutoModelForQuestionAnswering.from_pretrained(
-        model_args.model_name_or_path,
-        from_tf=bool(".ckpt" in model_args.model_name_or_path),
+        model_id,
+        from_tf=bool(".ckpt" in model_id),
         config=config,
         cache_dir=model_args.cache_dir,
         revision=model_args.model_revision,
@@ -415,6 +438,7 @@ def squad_preprocess(data_args, training_args, model_args):
             # Number of samples might increase during Feature Creation, We select only specified max samples
             max_train_samples = min(len(train_dataset), data_args.max_train_samples)
             train_dataset = train_dataset.select(range(max_train_samples))
+
     def prepare_validation_features(examples):
         # Some of the questions have lots of whitespace on the left, which is not useful and will make the
         # truncation of the context fail (the tokenized question will take a lots of space). So we remove that
@@ -543,42 +567,60 @@ def squad_preprocess(data_args, training_args, model_args):
             formatted_predictions = [{"id": k, "prediction_text": v} for k, v in predictions.items()]
 
         references = [{"id": ex["id"], "answers": ex[answer_column_name]} for ex in examples]
-        return EvalPrediction(predictions=formatted_predictions, label_ids=references)
+        return EvalPrediction(
+            predictions=cast(np.ndarray, formatted_predictions),
+            label_ids=cast(np.ndarray, references),
+        )
 
-    metric = load("squad_v2" if data_args.version_2_with_negative else "squad")
+    metric = as_metric(load("squad_v2" if data_args.version_2_with_negative else "squad"))
 
     def compute_metrics(p: EvalPrediction):
         return metric.compute(predictions=p.predictions, references=p.label_ids)
 
-
     return (
-        train_dataset, 
+        train_dataset,
         eval_dataset,
         eval_examples,
         test_dataset,
         test_examples,
-        data_collator, 
-        compute_metrics, 
-        model, 
+        data_collator,
+        compute_metrics,
+        model,
         tokenizer,
-        post_processing_function
+        post_processing_function,
     )
 
+
 class QuestionAnsweringTrainer(Trainer):
-    def __init__(self, *args, eval_examples=None, post_process_function=None, **kwargs):
+    def __init__(
+        self,
+        *args,
+        eval_examples: Dataset | None = None,
+        predict_examples: Dataset | None = None,
+        post_process_function=None,
+        **kwargs,
+    ):
         super().__init__(*args, **kwargs)
         self.eval_examples = eval_examples
+        self.predict_examples = predict_examples
         self.post_process_function = post_process_function
 
-    def evaluate(self, eval_dataset=None, eval_examples=None, ignore_keys=None, metric_key_prefix: str = "eval"):
-        eval_dataset = self.eval_dataset if eval_dataset is None else eval_dataset
-        eval_dataloader = self.get_eval_dataloader(eval_dataset)
-        eval_examples = self.eval_examples if eval_examples is None else eval_examples
+    def evaluate(
+        self,
+        eval_dataset: TorchDataset | dict[str, TorchDataset] | None = None,
+        ignore_keys: list[str] | None = None,
+        metric_key_prefix: str = "eval",
+    ) -> dict[str, float]:
+        selected_eval_dataset = self.eval_dataset if eval_dataset is None else eval_dataset
+        if selected_eval_dataset is None:
+            raise ValueError("evaluation dataset is required")
+        eval_dataloader = self.get_eval_dataloader(cast(TorchDataset, selected_eval_dataset))
+        eval_examples = self.eval_examples
 
         # Temporarily disable metric computation, we will do it in the loop here.
         compute_metrics = self.compute_metrics
         self.compute_metrics = None
-        eval_loop = self.prediction_loop if self.args.use_legacy_prediction_loop else self.evaluation_loop
+        eval_loop = self.evaluation_loop
         try:
             output = eval_loop(
                 eval_dataloader,
@@ -591,9 +633,13 @@ class QuestionAnsweringTrainer(Trainer):
         finally:
             self.compute_metrics = compute_metrics
 
-        if self.post_process_function is not None and self.compute_metrics is not None:
-            eval_preds = self.post_process_function(eval_examples, eval_dataset, output.predictions)
-            metrics = self.compute_metrics(eval_preds)
+        if self.post_process_function is not None and self.compute_metrics is not None and eval_examples is not None:
+            eval_preds = self.post_process_function(
+                eval_examples,
+                selected_eval_dataset,
+                output.predictions,
+            )
+            metrics = cast(dict[str, float], self.compute_metrics(eval_preds))
 
             # Prefix all keys with metric_key_prefix + '_'
             for key in list(metrics.keys()):
@@ -607,13 +653,19 @@ class QuestionAnsweringTrainer(Trainer):
         self.control = self.callback_handler.on_evaluate(self.args, self.state, self.control, metrics)
         return metrics
 
-    def predict(self, predict_dataset, predict_examples, ignore_keys=None, metric_key_prefix: str = "test"):
+    def predict(
+        self,
+        test_dataset: TorchDataset,
+        ignore_keys: list[str] | None = None,
+        metric_key_prefix: str = "test",
+    ) -> PredictionOutput:
+        predict_dataset = test_dataset
         predict_dataloader = self.get_test_dataloader(predict_dataset)
 
         # Temporarily disable metric computation, we will do it in the loop here.
         compute_metrics = self.compute_metrics
         self.compute_metrics = None
-        eval_loop = self.prediction_loop if self.args.use_legacy_prediction_loop else self.evaluation_loop
+        eval_loop = self.evaluation_loop
         try:
             output = eval_loop(
                 predict_dataloader,
@@ -626,16 +678,28 @@ class QuestionAnsweringTrainer(Trainer):
         finally:
             self.compute_metrics = compute_metrics
 
-        if self.post_process_function is None or self.compute_metrics is None:
-            return output
+        if self.post_process_function is None or self.compute_metrics is None or self.predict_examples is None:
+            return PredictionOutput(
+                predictions=output.predictions,
+                label_ids=output.label_ids,
+                metrics=output.metrics,
+            )
 
-        predictions = self.post_process_function(predict_examples, predict_dataset, output.predictions, "predict")
-        metrics = self.compute_metrics(predictions)
+        predictions = self.post_process_function(
+            self.predict_examples,
+            predict_dataset,
+            output.predictions,
+            "predict",
+        )
+        metrics = cast(dict[str, float], self.compute_metrics(predictions))
 
         # Prefix all keys with metric_key_prefix + '_'
         for key in list(metrics.keys()):
             if not key.startswith(f"{metric_key_prefix}_"):
                 metrics[f"{metric_key_prefix}_{key}"] = metrics.pop(key)
 
-        return PredictionOutput(predictions=predictions.predictions, label_ids=predictions.label_ids, metrics=metrics)
-
+        return PredictionOutput(
+            predictions=predictions.predictions,
+            label_ids=predictions.label_ids,
+            metrics=metrics,
+        )

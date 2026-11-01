@@ -1,4 +1,6 @@
 import logging
+from typing import Protocol, cast
+
 import nltk
 import numpy as np
 from datasets import load_dataset
@@ -12,12 +14,21 @@ from transformers import (
     AutoModelForSeq2SeqLM,
     AutoTokenizer,
     DataCollatorForSeq2Seq,
-    MBartTokenizer,
-    MBartTokenizerFast,
-    MBart50Tokenizer,
-    MBart50TokenizerFast,
-    BitsAndBytesConfig
+    BitsAndBytesConfig,
 )
+from transformers.models.mbart.tokenization_mbart import MBartTokenizer
+from transformers.models.mbart50.tokenization_mbart50 import MBart50Tokenizer
+
+from ..arguments import as_metric, as_tokenizer
+
+
+class RougeMeasurement(Protocol):
+    fmeasure: float
+
+
+class RougeScore(Protocol):
+    mid: RougeMeasurement
+
 
 # reserence code: https://github.com/QingruZhang/AdaLoRA/blob/main/NLG_QA/examples/summarization/run_summarization.py
 
@@ -35,13 +46,16 @@ summarization_name_mapping = {
     "xsum": ("document", "summary"),
     "wiki_summary": ("article", "highlights"),
 }
-MULTILINGUAL_TOKENIZERS = [MBartTokenizer, MBartTokenizerFast, MBart50Tokenizer, MBart50TokenizerFast]
+MULTILINGUAL_TOKENIZERS = [MBartTokenizer, MBart50Tokenizer]
 
 
 def nlg_prepocess(data_args, training_args, model_args):
+    model_id = model_args.model_name_or_path
+    if model_id is None:
+        raise ValueError("model_name_or_path is required")
     try:
         nltk.data.find("tokenizers/punkt_tab")
-    except (LookupError, OSError):
+    except LookupError, OSError:
         print("############### Dowloading punkt_tab ###############")
         if is_offline_mode():
             raise LookupError(
@@ -99,12 +113,14 @@ def nlg_prepocess(data_args, training_args, model_args):
         revision=model_args.model_revision,
         use_auth_token=True if model_args.use_auth_token else None,
     )
-    tokenizer = AutoTokenizer.from_pretrained(
-        model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
-        cache_dir=model_args.cache_dir,
-        use_fast=model_args.use_fast_tokenizer,
-        revision=model_args.model_revision,
-        use_auth_token=True if model_args.use_auth_token else None,
+    tokenizer = as_tokenizer(
+        AutoTokenizer.from_pretrained(
+            model_args.tokenizer_name if model_args.tokenizer_name else model_id,
+            cache_dir=model_args.cache_dir,
+            use_fast=model_args.use_fast_tokenizer,
+            revision=model_args.model_revision,
+            use_auth_token=True if model_args.use_auth_token else None,
+        )
     )
 
     if torch.cuda.get_device_capability()[0] >= 8:
@@ -118,8 +134,8 @@ def nlg_prepocess(data_args, training_args, model_args):
         bnb_4bit_use_double_quant=True,
     )
     model = AutoModelForSeq2SeqLM.from_pretrained(
-        model_args.model_name_or_path,
-        from_tf=bool(".ckpt" in model_args.model_name_or_path),
+        model_id,
+        from_tf=bool(".ckpt" in model_id),
         config=config,
         quantization_config=bnb_config,
         cache_dir=model_args.cache_dir,
@@ -129,11 +145,16 @@ def nlg_prepocess(data_args, training_args, model_args):
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
         model.config.pad_token_id = tokenizer.eos_token_id
+    if tokenizer.pad_token_id is None:
+        raise ValueError("tokenizer.pad_token_id must be defined")
     model.gradient_checkpointing_enable()
     model = prepare_model_for_kbit_training(model)
     model.resize_token_embeddings(len(tokenizer))
 
-    if model.config.decoder_start_token_id is None and isinstance(tokenizer, (MBartTokenizer, MBartTokenizerFast)):
+    if model.config.decoder_start_token_id is None and isinstance(
+        tokenizer,
+        (MBartTokenizer, MBart50Tokenizer),
+    ):
         if isinstance(tokenizer, MBartTokenizer):
             model.config.decoder_start_token_id = tokenizer.lang_code_to_id[data_args.lang]
         else:
@@ -177,9 +198,9 @@ def nlg_prepocess(data_args, training_args, model_args):
         return
 
     if isinstance(tokenizer, tuple(MULTILINGUAL_TOKENIZERS)):
-        assert (
-            data_args.lang is not None
-        ), f"{tokenizer.__class__.__name__} is a multilingual tokenizer which requires --lang argument"
+        assert data_args.lang is not None, (
+            f"{tokenizer.__class__.__name__} is a multilingual tokenizer which requires --lang argument"
+        )
 
         tokenizer.src_lang = data_args.lang
         tokenizer.tgt_lang = data_args.lang
@@ -233,8 +254,12 @@ def nlg_prepocess(data_args, training_args, model_args):
         model_inputs = tokenizer(inputs, max_length=data_args.max_source_length, padding=padding, truncation=True)
 
         # Setup the tokenizer for targets
-        with tokenizer.as_target_tokenizer():
-            labels = tokenizer(targets, max_length=max_target_length, padding=padding, truncation=True)
+        labels = tokenizer(
+            text_target=targets,
+            max_length=max_target_length,
+            padding=padding,
+            truncation=True,
+        )
 
         # If we are padding here, replace all tokenizer.pad_token_id in the labels by -100 when we want to ignore
         # padding in the loss.
@@ -313,7 +338,7 @@ def nlg_prepocess(data_args, training_args, model_args):
     )
 
     # Metric
-    metric = load("rouge")
+    metric = as_metric(load("rouge"))
 
     def postprocess_text(preds, labels):
         preds = [pred.strip() for pred in preds]
@@ -327,6 +352,8 @@ def nlg_prepocess(data_args, training_args, model_args):
 
     def compute_metrics(eval_preds):
         preds, labels = eval_preds
+        if isinstance(preds, tuple):
+            preds = preds[0]
         print("preds type:", type(preds))
         if isinstance(preds, tuple):
             print("preds tuple lens:", len(preds), "elem0 type:", type(preds[0]))
@@ -350,19 +377,11 @@ def nlg_prepocess(data_args, training_args, model_args):
 
         result = metric.compute(predictions=decoded_preds, references=decoded_labels, use_stemmer=True)
         # Extract a few results from ROUGE
-        result = {key: value.mid.fmeasure * 100 for key, value in result.items()}
+        result = {key: cast(RougeScore, value).mid.fmeasure * 100 for key, value in result.items()}
 
         prediction_lens = [np.count_nonzero(pred != tokenizer.pad_token_id) for pred in preds]
         result["gen_len"] = np.mean(prediction_lens)
         result = {k: round(v, 4) for k, v in result.items()}
         return result
-    
-    return (
-        train_dataset, 
-        eval_dataset,
-        test_dataset,
-        data_collator, 
-        compute_metrics, 
-        model, 
-        tokenizer
-    )
+
+    return (train_dataset, eval_dataset, test_dataset, data_collator, compute_metrics, model, tokenizer)

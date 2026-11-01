@@ -1,5 +1,6 @@
 from termcolor import colored
 
+
 def set_arguments_ft(parser):
     ### Dataset Arguments
     parser.add_argument(
@@ -225,15 +226,9 @@ def set_arguments_ft(parser):
     )
 
     ### Training Arguments
-    parser.add_argument(
-        "--do_not_train", action="store_true", default=False, help="Do training or not"
-    )
-    parser.add_argument(
-        "--do_not_eval", action="store_true", default=False, help="Do validation or not"
-    )
-    parser.add_argument(
-        "--do_predict", action="store_true", default=False, help="Do prediction or not"
-    )
+    parser.add_argument("--do_not_train", action="store_true", default=False, help="Do training or not")
+    parser.add_argument("--do_not_eval", action="store_true", default=False, help="Do validation or not")
+    parser.add_argument("--do_predict", action="store_true", default=False, help="Do prediction or not")
     parser.add_argument(
         "--eval_batch_size",
         "--per_device_eval_batch_size",
@@ -275,9 +270,7 @@ def set_arguments_ft(parser):
         type=float,
         help="Ratio of total training steps for warmup",
     )
-    parser.add_argument(
-        "--logging_steps", default=1, type=int, help="How often print train loss"
-    )
+    parser.add_argument("--logging_steps", default=1, type=int, help="How often print train loss")
     parser.add_argument(
         "--eval_strategy",
         "--save_strategy",
@@ -330,6 +323,7 @@ def set_arguments_ft(parser):
     parser.set_defaults(batch_size=8, n_epoches_train=3, eval_runs=1, dtype="float16")
 
     return parser
+
 
 def print_warnings_ft(args):
     if args.eval_steps is not None and args.eval_strategy not in ["steps", "no"]:

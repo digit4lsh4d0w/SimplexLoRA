@@ -58,5 +58,5 @@ lr_scheduler_type = "cosine"
 warmup_steps = 50
 max_steps = 5
 lora_r = "{lora_r}"
-do_evaluate = true
+do_eval = true
 k = "{k}"

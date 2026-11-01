@@ -2,33 +2,25 @@ import torch
 import gc
 from transformers import (
     Trainer,
-    HfArgumentParser
 )
 
-from simplexlora import config
 from simplexlora.experiments.glue.data import glue_preprocess
+from simplexlora.experiments.arguments import as_tokenizer, parse_training_arguments
 from simplexlora.utils import AdapterLayer, IdOptimizer
 
 import warnings
+
 warnings.filterwarnings("ignore")
+
 
 def main():
     for i in range(torch.cuda.device_count()):
         print("We will use the GPU:", torch.cuda.get_device_name(i))
-    parser = HfArgumentParser((
-        config.ModelArguments, 
-        config.DataTrainingArguments, 
-        config.TrainingArguments
-    ))
-    model_args, data_args, training_args = parser.parse_args_into_dataclasses()
-    training_args.learning_rate = float(training_args.learning_rate)
+    model_args, data_args, training_args = parse_training_arguments()
     ################# Model, Tokenizer and Dataset Downloading #################
-    train_dataset, _, _, _, data_collator, _, model, tokenizer = glue_preprocess(data_args,
-                                                                                 training_args, 
-                                                                                 model_args)
-    _, _, _, _, _, _, model_0, _ = glue_preprocess(data_args,
-                                                   training_args, 
-                                                   model_args)
+    train_dataset, _, _, _, data_collator, _, model, tokenizer = glue_preprocess(data_args, training_args, model_args)
+    _, _, _, _, _, _, model_0, _ = glue_preprocess(data_args, training_args, model_args)
+    tokenizer = as_tokenizer(tokenizer)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
         model.config.pad_token_id = model.config.eos_token_id
@@ -45,66 +37,67 @@ def main():
         if name_i == 0:
             attn_name = "query"
             model.deberta.encoder.layer[adapter_i].attention.self.query_proj = AdapterLayer(
-                model.deberta.encoder.layer[adapter_i].attention.self.query_proj, 
-                r = training_args.lora_r
+                model.deberta.encoder.layer[adapter_i].attention.self.query_proj, r=training_args.lora_r
             )
             model_0.deberta.encoder.layer[adapter_i].attention.self.query_proj.weight.requires_grad = True
         elif name_i == 1:
             attn_name = "value"
             model.deberta.encoder.layer[adapter_i].attention.self.value_proj = AdapterLayer(
-                model.deberta.encoder.layer[adapter_i].attention.self.value_proj, 
-                r = training_args.lora_r
+                model.deberta.encoder.layer[adapter_i].attention.self.value_proj, r=training_args.lora_r
             )
             model_0.deberta.encoder.layer[adapter_i].attention.self.value_proj.weight.requires_grad = True
         else:
             attn_name = "key"
             model.deberta.encoder.layer[adapter_i].attention.self.key_proj = AdapterLayer(
-                model.deberta.encoder.layer[adapter_i].attention.self.key_proj, 
-                r = training_args.lora_r
+                model.deberta.encoder.layer[adapter_i].attention.self.key_proj, r=training_args.lora_r
             )
             model_0.deberta.encoder.layer[adapter_i].attention.self.key_proj.weight.requires_grad = True
     else:
         raise NotImplementedError(f"Unsupported model: {model_args.model_name_or_path}")
     ######################### Optimizer and Scheduler ##########################
     optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=training_args.learning_rate,
-        weight_decay=training_args.weight_decay
+        model.parameters(), lr=training_args.learning_rate, weight_decay=training_args.weight_decay
     )
     optimizer_0 = IdOptimizer(
         model_0.parameters(),
     )
     ############################# Training #####################################
     run_name = f"k={training_args.k} [{attn_name}#{adapter_i}]"
-    print("$"*30, run_name, "$"*30)
-    trainer=Trainer(
+    print("$" * 30, run_name, "$" * 30)
+    trainer = Trainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset if training_args.do_train else None,
         eval_dataset=None,
         processing_class=tokenizer,
         data_collator=data_collator,
-        optimizers=[optimizer, None]
+        optimizers=(optimizer, None),
     )
-    trainer_0=Trainer(
+    trainer_0 = Trainer(
         model=model_0,
         args=training_args,
         train_dataset=train_dataset if training_args.do_train else None,
         eval_dataset=None,
         processing_class=tokenizer,
         data_collator=data_collator,
-        optimizers=[optimizer_0, None]
+        optimizers=(optimizer_0, None),
     )
     trainer.train()
     trainer_0.train()
+    lora_A = None
+    lora_B = None
     for name, param in model.named_parameters():
         if param.requires_grad and "lora_A" in name:
             lora_A = param.data
         if param.requires_grad and "lora_B" in name:
             lora_B = param.data
+    if lora_A is None or lora_B is None:
+        raise RuntimeError("LoRA adapter weights were not found after training")
     BA = lora_B @ lora_A
     g_0 = optimizer_0.grad_0
-    #result = torch.trace(g_0.T @ BA) / (torch.linalg.norm(g_0) * torch.linalg.norm(BA))
+    if g_0 is None:
+        raise RuntimeError("Initial gradient was not recorded during training")
+    # result = torch.trace(g_0.T @ BA) / (torch.linalg.norm(g_0) * torch.linalg.norm(BA))
     result = torch.trace(g_0.T @ BA)
 
     f_name = f"./additional_experiments/dotprod_data/deberta_{data_args.task_name}_no_norm"
@@ -114,6 +107,7 @@ def main():
     del trainer, trainer_0, model, model_0
     gc.collect()
     torch.cuda.empty_cache()
+
 
 if __name__ == "__main__":
     main()

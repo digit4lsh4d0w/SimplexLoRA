@@ -5,56 +5,53 @@ import wandb
 import peft
 import json
 from pathlib import Path
-from transformers import (
-    HfArgumentParser,
-    get_scheduler,
-    Seq2SeqTrainer
-)
+from typing import cast
+from peft.tuners.lora.layer import LoraLayer
+from transformers import get_scheduler, Seq2SeqTrainer
 
 from .data import nlg_prepocess
-from simplexlora import (
-    config,
-    optimizers,
-    utils
+from ..arguments import (
+    as_tokenizer,
+    as_trainer_optimizers,
+    parse_training_arguments,
+    uses_wandb,
 )
+from simplexlora import optimizers, utils
 import warnings
+
 warnings.filterwarnings("ignore")
+
 
 def main():
     for i in range(torch.cuda.device_count()):
         print("We will use the GPU:", torch.cuda.get_device_name(i))
-    parser = HfArgumentParser((
-        config.ModelArguments, 
-        config.DataTrainingArguments, 
-        config.TrainingArguments
-    ))
-    model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+    model_args, data_args, training_args = parse_training_arguments()
     utils.set_seed(training_args.seed)
     ################# Model, Tokenizer and Dataset Downloading #################
-    (train_dataset, eval_dataset, test_dataset, data_collator, 
-     compute_metrics, model, tokenizer) = nlg_prepocess(data_args, 
-                                                        training_args, 
-                                                        model_args)
+    (train_dataset, eval_dataset, test_dataset, data_collator, compute_metrics, model, tokenizer) = nlg_prepocess(
+        data_args, training_args, model_args
+    )
+    tokenizer = as_tokenizer(tokenizer)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
         model.config.pad_token_id = model.config.eos_token_id
     ############################### PEFT Adapters ##############################
     all_params_before_peft, _ = utils.print_trainable_parameters(model, verbose=False)
-    training_args.model = model_args.model_name_or_path         # for wandb
+    training_args.model_name = model_args.model_name_or_path  # for wandb
     peft_args = utils.get_peft_arguments(training_args)
     if peft_args is not None:
         model = peft.get_peft_model(model, peft_args)
     num_peft_adapters = utils.count_atapters(model, training_args.ft_strategy)
     if training_args.ft_strategy == "WeightLoRA":
-        if training_args.use_rand: 
+        if training_args.use_rand:
             training_args.ft_strategy = "RandLoRA"
             utils.apply_rand_weight_lora(model, num_peft_adapters, training_args.k)
         if training_args.use_fat:
             training_args.ft_strategy = "SimplexLoRA"
-    training_args.label_names = ["labels"] # peft and compute_metrics() problem
+    training_args.label_names = ["labels"]  # peft and compute_metrics() problem
     ######################### Optimizer and Scheduler ##########################
     optimizer, scheduler = None, None
-    if "tuned" in [training_args.learning_rate]: # [TODO] add more tuned params
+    if training_args.use_tuned_learning_rate:
         f_name = Path(__file__).with_name("tuned_params.json")
         with open(f_name) as f:
             tuned_params = json.load(f)
@@ -66,11 +63,11 @@ def main():
     if training_args.ft_strategy == "SimplexLoRA":
         weight_params = []
         loraAB_params = []
-        lora_layers = []
+        lora_layers: list[LoraLayer] = []
         other_params = []
-        
+
         for name, module in model.named_modules():
-            if isinstance(module, peft.tuners.lora.layer.LoraLayer):
+            if isinstance(module, LoraLayer):
                 lora_layers.append(module)
 
         for name, param in model.named_parameters():
@@ -91,9 +88,7 @@ def main():
                     "name": "weight_params",
                 },
             ],
-
             lora_layers=lora_layers,
-
             lr=training_args.learning_rate,
             weight_decay=training_args.weight_decay,
             num_adapters=len(weight_params),
@@ -105,6 +100,7 @@ def main():
         ######################################################
 
         import math
+
         len_dataloader = math.ceil(len(train_dataset) / training_args.per_device_train_batch_size)
         num_update_steps_per_epoch = len_dataloader // training_args.gradient_accumulation_steps
         num_update_steps_per_epoch = max(num_update_steps_per_epoch, 1)
@@ -115,25 +111,33 @@ def main():
 
         ######################################################
         calib_iters = training_args.max_fat_steps * training_args.fat_step
-        #scheduler1 = torch.optim.lr_scheduler.ConstantLR(optimizer, factor=0.1, total_iters=[calib_iters], verbose=True)
+        scheduler_kwargs = (
+            training_args.lr_scheduler_kwargs if isinstance(training_args.lr_scheduler_kwargs, dict) else None
+        )
         if calib_iters > 0:
-            scheduler1 = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=0.001, total_iters=calib_iters, verbose=True)
+            scheduler1 = torch.optim.lr_scheduler.LinearLR(
+                optimizer,
+                start_factor=0.001,
+                total_iters=calib_iters,
+            )
             scheduler2 = get_scheduler(
-                    training_args.lr_scheduler_type,
-                    optimizer=optimizer,
-                    num_warmup_steps=training_args.warmup_steps,
-                    num_training_steps=max_steps - calib_iters,
-                    scheduler_specific_kwargs={'verbose': True}.update(training_args.lr_scheduler_kwargs),
-                )
-            scheduler = torch.optim.lr_scheduler.SequentialLR(optimizer, schedulers=[scheduler1, scheduler2], milestones=[calib_iters])
+                training_args.lr_scheduler_type,
+                optimizer=optimizer,
+                num_warmup_steps=round(training_args.warmup_steps),
+                num_training_steps=max_steps - calib_iters,
+                scheduler_specific_kwargs=scheduler_kwargs,
+            )
+            scheduler = torch.optim.lr_scheduler.SequentialLR(
+                optimizer, schedulers=[scheduler1, scheduler2], milestones=[calib_iters]
+            )
         else:
             scheduler = get_scheduler(
-                    training_args.lr_scheduler_type,
-                    optimizer=optimizer,
-                    num_warmup_steps=training_args.warmup_steps,
-                    num_training_steps=max_steps - calib_iters,
-                    scheduler_specific_kwargs={'verbose': True}.update(training_args.lr_scheduler_kwargs),
-                )
+                training_args.lr_scheduler_type,
+                optimizer=optimizer,
+                num_warmup_steps=round(training_args.warmup_steps),
+                num_training_steps=max_steps - calib_iters,
+                scheduler_specific_kwargs=scheduler_kwargs,
+            )
     elif training_args.ft_strategy == "WeightLoRA":
         weight_params, other_params = [], []
         for name, param in model.named_parameters():
@@ -160,19 +164,18 @@ def main():
         )
     else:
         optimizer = torch.optim.AdamW(
-            model.parameters(),
-            lr=training_args.learning_rate,
-            weight_decay=training_args.weight_decay
+            model.parameters(), lr=training_args.learning_rate, weight_decay=training_args.weight_decay
         )
     ############################### Wandb Saves ################################
-    training_args.all_params, training_args.trainable_params = \
-        utils.print_trainable_parameters(model)
+    training_args.all_params, training_args.trainable_params = utils.print_trainable_parameters(model)
     training_args.num_peft_adapters = num_peft_adapters
     training_args.peft_params = training_args.all_params - all_params_before_peft
-    training_args.train_proportion = training_args.trainable_params / training_args.all_params * 100 
-    training_args.peft_proportion = training_args.peft_params / training_args.all_params * 100 
+    training_args.train_proportion = training_args.trainable_params / training_args.all_params * 100
+    training_args.peft_proportion = training_args.peft_params / training_args.all_params * 100
     os.environ["WANDB_PROJECT"] = "S1mplexLoRA"
-    if training_args.ft_strategy in ["SimplexLoRA", ]:
+    if training_args.ft_strategy in [
+        "SimplexLoRA",
+    ]:
         run_name = f"[{training_args.ft_strategy} fs={training_args.fat_step}, mfs={training_args.max_fat_steps}, r={training_args.lora_r}, wd={training_args.weight_decay}]"
     else:
         run_name = f"[{training_args.ft_strategy} r={training_args.lora_r}]"
@@ -187,7 +190,7 @@ def main():
     training_args.benchmark_name = data_args.dataset_name
     training_args.tsk_name = data_args.task_name
     ############################# Training #####################################
-    print("$"*30, f" {run_name} ", "$"*30)
+    print("$" * 30, f" {run_name} ", "$" * 30)
     trainer = Seq2SeqTrainer(
         model=model,
         args=training_args,
@@ -196,18 +199,18 @@ def main():
         processing_class=tokenizer,
         data_collator=data_collator,
         compute_metrics=compute_metrics if training_args.predict_with_generate else None,
-        optimizers=[optimizer, scheduler]
+        optimizers=as_trainer_optimizers(optimizer, scheduler),
     )
-    
+
     if training_args.do_train:
         train_result = trainer.train()
-        train_metrics = train_result.metrics
+        train_metrics: dict[str, object] = dict(train_result.metrics)
         max_train_samples = (
             data_args.max_train_samples if data_args.max_train_samples is not None else len(train_dataset)
         )
         train_metrics["train_samples"] = min(max_train_samples, len(train_dataset))
         train_metrics["train_memory_gb"] = torch.cuda.max_memory_allocated() / 2**30
-        train_metrics["train_runtime"] /= 60
+        train_metrics["train_runtime"] = float(cast(float, train_metrics["train_runtime"])) / 60
         if training_args.ft_strategy in ["WeightLoRA", "RandLoRA", "SimplexLoRA"]:
             i = 0
             j = 0
@@ -215,7 +218,7 @@ def main():
                 if "lora_weight" in name:
                     if param.sum().item() > 0 and param.requires_grad:
                         i += 1
-                        if training_args.model == "microsoft/deberta-v3-base":
+                        if model_args.model_name_or_path == "microsoft/deberta-v3-base":
                             continue
                         else:
                             load_name = name
@@ -224,14 +227,13 @@ def main():
                     j += 1
             print(f"There are {j} null B LoRA matrices")
 
-
         trainer.save_model()
 
         trainer.log_metrics("train", train_metrics)
         trainer.save_metrics("train", train_metrics)
         trainer.save_state()
-        
-        if "wandb" in training_args.report_to:
+
+        if uses_wandb(training_args.report_to):
             wandb.config.update(train_metrics, allow_val_change=True)
     ################################ Evaluation ################################
     if training_args.do_eval:
@@ -247,11 +249,11 @@ def main():
 
         trainer.log_metrics("eval", eval_metrics)
         trainer.save_metrics("eval", eval_metrics)
-            
+
         eval_metrics["eval_memory_gb"] = torch.cuda.max_memory_allocated() / 2**30
         if "eval_runtime" in eval_metrics.keys():
             eval_metrics["eval_runtime"] /= 60
-        if "wandb" in training_args.report_to:
+        if uses_wandb(training_args.report_to):
             wandb.config.update(eval_metrics, allow_val_change=True)
     ############################################################################
 

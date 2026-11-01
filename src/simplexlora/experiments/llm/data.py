@@ -41,9 +41,7 @@ class DatasetBuilder:
         if eval_mode:
             formatted_prompt = f"{intro_blurb} {sample['question']}. Answer:"
         else:
-            formatted_prompt = (
-                f"{intro_blurb} {sample['question']}. Answer: {sample['response']}"
-            )
+            formatted_prompt = f"{intro_blurb} {sample['question']}. Answer: {sample['response']}"
 
         sample["text"] = formatted_prompt
         return sample
@@ -61,9 +59,7 @@ class DatasetBuilder:
         print("Preprocessing dataset...")
 
         # Add prompt to each sample
-        dataset = dataset.map(
-            lambda sample: self.create_prompt_formats(sample, eval_mode)
-        )
+        dataset = dataset.map(lambda sample: self.create_prompt_formats(sample, eval_mode))
 
         print(f"Prompt Sample: {dataset['text'][0]}")
 
@@ -74,9 +70,7 @@ class DatasetBuilder:
             print(f"Average sample length: {avg_length:.2f} characters")
 
             # Apply preprocessing for training
-            _preprocessing_function = partial(
-                self.preprocess_batch, max_length=max_length, tokenizer=tokenizer
-            )
+            _preprocessing_function = partial(self.preprocess_batch, max_length=max_length, tokenizer=tokenizer)
             dataset = dataset.map(
                 _preprocessing_function,
                 batched=True,
@@ -84,9 +78,7 @@ class DatasetBuilder:
             )
 
             # Filter out samples that exceed max_length
-            dataset = dataset.filter(
-                lambda sample: len(sample["input_ids"]) < max_length
-            )
+            dataset = dataset.filter(lambda sample: len(sample["input_ids"]) < max_length)
 
             # Shuffle dataset
             dataset = dataset.shuffle(seed=seed)
@@ -98,13 +90,9 @@ class DatasetBuilder:
         self.build_dataset()
 
         # Apply limits
-        train_questions, train_answers = self.apply_limits(
-            self.train_questions, self.train_answers, is_eval=False
-        )
+        train_questions, train_answers = self.apply_limits(self.train_questions, self.train_answers, is_eval=False)
 
-        eval_questions, eval_answers = self.apply_limits(
-            self.eval_questions, self.eval_answers, is_eval=True
-        )
+        eval_questions, eval_answers = self.apply_limits(self.eval_questions, self.eval_answers, is_eval=True)
 
         print(f"dataset: {self.args.dataset}")
         print(f"train data size: {len(train_answers)}")
@@ -193,6 +181,7 @@ class CommonsenseQADatasetBuilder(DatasetBuilder):
 
                     self.eval_questions.append(question)
                     self.eval_answers.append(json_res["answerKey"])
+
 
 class ArithmeticDatasetBuilder(DatasetBuilder):
     """Handles addsub, multiarith, singleeq datasets"""
@@ -350,16 +339,15 @@ class MathQADatasetBuilder(DatasetBuilder):
         return "answer only the numbers, write answer first."
 
     def build_dataset(self):
-        dataset = load_dataset("allenai/math_qa", download_mode="force_redownload", verification_mode="no_checks", trust_remote_code=True)
+        dataset = load_dataset(
+            "allenai/math_qa", download_mode="force_redownload", verification_mode="no_checks", trust_remote_code=True
+        )
         train_data = dataset["train"]
         test_data = dataset["test"]
 
         for item in train_data:
             q = item["Problem"].replace("\n", "").replace("\\n", "")
-            choices = {
-                d.strip()[0]: d.split(")")[-1].strip()
-                for d in item["options"].split(",")
-            }
+            choices = {d.strip()[0]: d.split(")")[-1].strip() for d in item["options"].split(",")}
             a = choices.get(item["correct"])
             o = item["options"].replace("\n", "").replace("\\n", "")
 
@@ -369,16 +357,14 @@ class MathQADatasetBuilder(DatasetBuilder):
 
         for item in test_data:
             q = item["Problem"].replace("\n", "").replace("\\n", "")
-            choices = {
-                d.strip()[0]: d.split(")")[-1].strip()
-                for d in item["options"].split(",")
-            }
+            choices = {d.strip()[0]: d.split(")")[-1].strip() for d in item["options"].split(",")}
             a = choices.get(item["correct"])
             o = item["options"].replace("\n", "").replace("\\n", "")
 
             if q and a:
                 self.eval_questions.append(q + f". Choices: {o}")
                 self.eval_answers.append(a)
+
 
 class HellaSwagDatasetBuilder(DatasetBuilder):
     def get_intro_blurb(self):
@@ -395,9 +381,7 @@ class HellaSwagDatasetBuilder(DatasetBuilder):
             answer = ending_options[int(item["label"])]
             ending_options_str = "; ".join(ending_options)
             if context and answer:
-                self.train_questions.append(
-                    context + f"... [Ending options]: {ending_options_str}."
-                )
+                self.train_questions.append(context + f"... [Ending options]: {ending_options_str}.")
                 self.train_answers.append(answer)
 
         for item in test_data:
@@ -406,9 +390,7 @@ class HellaSwagDatasetBuilder(DatasetBuilder):
             answer = ending_options[int(item["label"])]
             ending_options_str = "; ".join(ending_options)
             if context and answer:
-                self.eval_questions.append(
-                    context + f"... [Ending options]: {ending_options_str}."
-                )
+                self.eval_questions.append(context + f"... [Ending options]: {ending_options_str}.")
                 self.eval_answers.append(answer)
 
 
@@ -417,9 +399,7 @@ class ArcChallengeDatasetBuilder(DatasetBuilder):
         return "Choose the correct answer, write only it, word by word."
 
     def build_dataset(self):
-        dataset = load_dataset(
-            "allenai/ai2_arc", "ARC-Challenge", split=["train", "test"]
-        )
+        dataset = load_dataset("allenai/ai2_arc", "ARC-Challenge", split=["train", "test"])
         train_data = dataset[0]
         test_data = dataset[1]
 
@@ -429,9 +409,7 @@ class ArcChallengeDatasetBuilder(DatasetBuilder):
             answer = dict(zip(choices["label"], choices["text"])).get(item["answerKey"])
             ending_options_str = "; ".join(choices["text"])
             if question and answer:
-                self.train_questions.append(
-                    question + f" [Answer options]: {ending_options_str}."
-                )
+                self.train_questions.append(question + f" [Answer options]: {ending_options_str}.")
                 self.train_answers.append(answer)
 
         for item in test_data:
@@ -440,19 +418,16 @@ class ArcChallengeDatasetBuilder(DatasetBuilder):
             answer = dict(zip(choices["label"], choices["text"])).get(item["answerKey"])
             ending_options_str = "; ".join(choices["text"])
             if question and answer:
-                self.eval_questions.append(
-                    question + f" [Answer options]: {ending_options_str}."
-                )
+                self.eval_questions.append(question + f" [Answer options]: {ending_options_str}.")
                 self.eval_answers.append(answer)
+
 
 class BoolQDatasetBuilder(DatasetBuilder):
     def get_intro_blurb(self):
         return "answer only True or False, write answer first."
 
     def build_dataset(self):
-        dataset = load_dataset(
-            "google/boolq", split=["train", "validation"]
-        )
+        dataset = load_dataset("google/boolq", split=["train", "validation"])
         train_data = dataset[0]
         test_data = dataset[1]
 
@@ -460,19 +435,16 @@ class BoolQDatasetBuilder(DatasetBuilder):
             question = item["question"]
             answer = item["answer"]
             if question is not None and answer is not None:
-                self.train_questions.append(
-                    f"{question}. [Answer options]: True or False"
-                )
+                self.train_questions.append(f"{question}. [Answer options]: True or False")
                 self.train_answers.append(str(answer))
 
         for item in test_data:
             question = item["question"]
             answer = item["answer"]
             if question is not None and answer is not None:
-                self.eval_questions.append(
-                    f"{question}. [Answer options]: True or False"
-                )
+                self.eval_questions.append(f"{question}. [Answer options]: True or False")
                 self.eval_answers.append(str(answer))
+
 
 class DatasetRegistry:
     """Registry for dataset paths and builders"""

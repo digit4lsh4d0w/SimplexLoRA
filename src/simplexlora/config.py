@@ -1,6 +1,8 @@
 from typing import Optional
 from dataclasses import dataclass, field
 from transformers import Seq2SeqTrainingArguments
+from transformers.trainer_utils import IntervalStrategy, SchedulerType
+from transformers.training_args import OptimizerNames
 from transformers.utils import check_min_version
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
@@ -18,6 +20,7 @@ task_to_keys_glue = {
     "wnli": ("sentence1", "sentence2"),
 }
 
+
 ################################ Data Arguments ################################
 @dataclass
 class DataTrainingArguments:
@@ -28,10 +31,8 @@ class DataTrainingArguments:
     into argparse arguments to be able to specify them on
     the command line.
     """
-    dataset_name: str = field(
-        default="glue",
-        metadata={"help": "Name pf the dataset for fine-tuning"}
-    )
+
+    dataset_name: str = field(default="glue", metadata={"help": "Name pf the dataset for fine-tuning"})
     task_name: Optional[str] = field(
         default=None,
         metadata={"help": "The name of the task to train on: " + ", ".join(task_to_keys_glue.keys())},
@@ -44,8 +45,7 @@ class DataTrainingArguments:
         },
     )
     overwrite_cache: bool = field(
-        default=False, 
-        metadata={"help": "Overwrite the cached preprocessed datasets or not."}
+        default=False, metadata={"help": "Overwrite the cached preprocessed datasets or not."}
     )
     pad_to_max_length: bool = field(
         default=True,
@@ -76,17 +76,12 @@ class DataTrainingArguments:
         },
     )
     train_file: Optional[str] = field(
-        default=None, 
-        metadata={"help": "A csv or a json file containing the training data."}
+        default=None, metadata={"help": "A csv or a json file containing the training data."}
     )
     validation_file: Optional[str] = field(
-        default=None, 
-        metadata={"help": "A csv or a json file containing the validation data."}
+        default=None, metadata={"help": "A csv or a json file containing the validation data."}
     )
-    test_file: Optional[str] = field(
-        default=None, 
-        metadata={"help": "A csv or a json file containing the test data."}
-    )
+    test_file: Optional[str] = field(default=None, metadata={"help": "A csv or a json file containing the test data."})
     preprocessing_num_workers: Optional[int] = field(
         default=None,
         metadata={"help": "The number of processes to use for the preprocessing"},
@@ -172,9 +167,7 @@ class DataTrainingArguments:
     )
     num_beams: Optional[int] = field(
         default=True,
-        metadata={
-            "help": "[TODO]"
-        },
+        metadata={"help": "[TODO]"},
     )
 
     def __post_init__(self):
@@ -189,15 +182,15 @@ class DataTrainingArguments:
                 train_extension = self.train_file.split(".")[-1]
                 assert train_extension in ["csv", "json"], "`train_file` should be a csv or a json file."
                 validation_extension = self.validation_file.split(".")[-1]
-                assert (
-                    validation_extension == train_extension
-                ), "`validation_file` should have the same extension (csv or json) as `train_file`."
+                assert validation_extension == train_extension, (
+                    "`validation_file` should have the same extension (csv or json) as `train_file`."
+                )
         elif self.dataset_name in ["squad", "squad_v2"]:
             if (
-            self.dataset_name is None
-            and self.train_file is None
-            and self.validation_file is None
-            and self.test_file is None
+                self.dataset_name is None
+                and self.train_file is None
+                and self.validation_file is None
+                and self.test_file is None
             ):
                 raise ValueError("Need either a dataset name or a training/validation file/test_file.")
             else:
@@ -233,19 +226,15 @@ class ModelArguments:
     """
     Arguments pertaining to which model/config/tokenizer we are going to fine-tune from.
     """
-    model_name_or_path: str = field(
-        default=None,
-        metadata={
-            "help": "Path to a pretrained model or a model identifier from huggingface.co/models."
-        }
+
+    model_name_or_path: Optional[str] = field(
+        default=None, metadata={"help": "Path to a pretrained model or a model identifier from huggingface.co/models."}
     )
     config_name: Optional[str] = field(
-        default=None, 
-        metadata={"help": "Pretrained config name or path if not the same as model_name"}
+        default=None, metadata={"help": "Pretrained config name or path if not the same as model_name"}
     )
     tokenizer_name: Optional[str] = field(
-        default=None, 
-        metadata={"help": "Pretrained tokenizer name or path if not the same as model_name"}
+        default=None, metadata={"help": "Pretrained tokenizer name or path if not the same as model_name"}
     )
     cache_dir: Optional[str] = field(
         default=None,
@@ -271,190 +260,93 @@ class ModelArguments:
         metadata={"help": "Regularization Loss Weight"},
     )
     masking_prob: Optional[float] = field(
-        default=0.0, #[TODO] 
+        default=0.0,  # [TODO]
         metadata={"help": "Token Masking Probability"},
     )
+
 
 ############################## Training Arguments ##############################
 @dataclass
 class TrainingArguments(Seq2SeqTrainingArguments):
-    output_dir: str = field(
-        default="./train_outputs",
-        metadata={"help": "Folder to save output files"}
-    )
-    do_train: Optional[bool] = field(
-        default=True,
-        metadata={"help": "Do training or not"}
-    )
-    dataset_text_field: Optional[str] = field(
-        default="text",
-        metadata={"help": "Default text key in train dataset"}
-    )
-    per_device_train_batch_size: Optional[int] = field(
-        default=32,
-        metadata={"help": "Batch size for training"}
-    )
-    per_device_eval_batch_size: Optional[int] = field(
-        default=32,
-        metadata={"help": "Batch size for evaluation"}
-    )
-    gradient_accumulation_steps: Optional[int] = field(
+    output_dir: Optional[str] = field(default="./train_outputs", metadata={"help": "Folder to save output files"})
+    do_train: bool = field(default=True, metadata={"help": "Do training or not"})
+    dataset_text_field: Optional[str] = field(default="text", metadata={"help": "Default text key in train dataset"})
+    per_device_train_batch_size: int = field(default=32, metadata={"help": "Batch size for training"})
+    per_device_eval_batch_size: int = field(default=32, metadata={"help": "Batch size for evaluation"})
+    gradient_accumulation_steps: int = field(
         default=6,
-        metadata={"help": "Number of accumulation steps to make a gradient step, i.e. before optimizer.step()"}
+        metadata={"help": "Number of accumulation steps to make a gradient step, i.e. before optimizer.step()"},
     )
-    lr_scheduler_type: Optional[str] = field(
+    lr_scheduler_type: SchedulerType | str = field(
         default="linear",
-        metadata={"help": "Scheduler for optimizer. We pass it in get_scheduler, possible options are"}
+        metadata={"help": "Scheduler for optimizer. We pass it in get_scheduler, possible options are"},
     )
-    weight_decay: Optional[float] = field(
-        default=0.01,
-        metadata={"help": "Weight decay"}
+    weight_decay: float = field(default=0.01, metadata={"help": "Weight decay"})
+    weight_decay_w: Optional[float] = field(default=0.0, metadata={"help": "Weight decay for LoRA"})
+    eval_strategy: IntervalStrategy | str = field(default="steps", metadata={"help": "How to make eval"})
+    logging_steps: float = field(default=1.0, metadata={"help": "How often print train loss"})
+    seed: int = field(default=18, metadata={"help": "Seed for all experiment"})
+    learning_rate: float = field(default=8e-4, metadata={"help": "Learning rate for LoRA parameters"})
+    report_to: None | str | list[str] = field(
+        default="wandb", metadata={"help": "Where to place results. none or wandb"}
     )
-    weight_decay_w: Optional[float] = field(
-        default=0.0,
-        metadata={"help": "Weight decay for LoRA"}
-    )
-    eval_strategy: Optional[str] = field(
-        default="steps",
-        metadata={"help": "How to make eval"}
-    )
-    logging_steps: Optional[int] = field(
-        default=1,
-        metadata={"help": "How often print train loss"}
-    )
-    seed: Optional[int] = field(
-        default=18,
-        metadata={"help": "Seed for all experiment"}
-    )
-    learning_rate: Optional[str] = field(
-        default="8e-4",
-        metadata={"help": "Learning rate. If `tuned`, then uses tuded hyperparametars, if float number it would be cast to float"}
-    )
-    report_to: Optional[str] = field(
-        default="wandb",
-        metadata={"help": "Where to place results. none or wandb"}
-    )
-    ft_strategy: Optional[str] = field(
-        default="LoRA",
-        metadata={"help": "What PEFT strategy to use"}
-    )
-    run_name: Optional[str] = field(
-        default="zalupa",
-        metadata={"help": "Wandb run name"}
-    )
-    lora_r: Optional[int] = field(
-        default=None,
-        metadata={"help": "Rank for LoRA and LoRA-like PEFT adapters"}
-    )
-    lora_alpha: Optional[int] = field(
-        default=None,
-        metadata={"help": "Scaling of LoRA and LoRA-like PEFT adapters"}
-    )
-    lora_dropout: Optional[float] = field(
-        default=None,
-        metadata={"help": "Dropout of LoRA and LoRA-like PEFT adapters"}
-    )
-    cls_dropout: Optional[float] = field(
-        default=None,
-        metadata={"help": "cls drop out."}
-    )
-    optim: Optional[str] = field(
+    ft_strategy: str = field(default="LoRA", metadata={"help": "What PEFT strategy to use"})
+    run_name: str | None = field(default="zalupa", metadata={"help": "Wandb run name"})
+    lora_r: int = field(default=64, metadata={"help": "Rank for LoRA and LoRA-like PEFT adapters"})
+    lora_alpha: int = field(default=128, metadata={"help": "Scaling of LoRA and LoRA-like PEFT adapters"})
+    lora_dropout: float = field(default=0.05, metadata={"help": "Dropout of LoRA and LoRA-like PEFT adapters"})
+    cls_dropout: Optional[float] = field(default=None, metadata={"help": "cls drop out."})
+    optim: OptimizerNames | str = field(
         default="adamw_torch",
-        metadata={"help": "Name of the optimizer to use. Possible choises available here: https://github.com/huggingface/transformers/blob/main/src/transformers/training_args.py"}
+        metadata={
+            "help": "Name of the optimizer to use. Possible choises available here: https://github.com/huggingface/transformers/blob/main/src/transformers/training_args.py"
+        },
     )
-    model_name: Optional[str] = field(
-        default=None,
-        metadata={"help": "For wandb"}
-    )
-    optimizer: Optional[str] = field(
-        default=None,
-        metadata={"help": "For wandb"}
-    )
-    scheduler: Optional[str] = field(
-        default=None,
-        metadata={"help": "For wandb"}
-    )
-    benchmark_name: Optional[str] = field(
-        default=None,
-        metadata={"help": "For wandb"}
-    )
-    tsk_name: Optional[str] = field(
-        default=None,
-        metadata={"help": "For wandb"}
-    )
-    all_params: Optional[int] = field(
-        default=None,
-        metadata={"help": "All params of the model. For wandb"}
-    )
+    model_name: Optional[str] = field(default=None, metadata={"help": "For wandb"})
+    optimizer: Optional[str] = field(default=None, metadata={"help": "For wandb"})
+    scheduler: Optional[str] = field(default=None, metadata={"help": "For wandb"})
+    benchmark_name: Optional[str] = field(default=None, metadata={"help": "For wandb"})
+    tsk_name: Optional[str] = field(default=None, metadata={"help": "For wandb"})
+    all_params: Optional[int] = field(default=None, metadata={"help": "All params of the model. For wandb"})
     trainable_params: Optional[int] = field(
-        default=None,
-        metadata={"help": "Trainable params of the model. For wandb"}
+        default=None, metadata={"help": "Trainable params of the model. For wandb"}
     )
     train_proportion: Optional[float] = field(
-        default=None,
-        metadata={"help": "all_params / trainable_params * 100%%. For wandb"}
+        default=None, metadata={"help": "all_params / trainable_params * 100%%. For wandb"}
     )
     peft_proportion: Optional[float] = field(
         default=None,
-        metadata={"help": "all_params / (all_params after PEFT - all_params before PEFT) * 100%%. For wandb"}
+        metadata={"help": "all_params / (all_params after PEFT - all_params before PEFT) * 100%%. For wandb"},
     )
     peft_params: Optional[float] = field(
-        default=None,
-        metadata={"help": "All params after peft - All params before peft. For wandb"}
+        default=None, metadata={"help": "All params after peft - All params before peft. For wandb"}
     )
-    num_peft_adapters: Optional[float] = field(
-        default=None,
-        metadata={"help": "Num peft adapters across layers. For wandb"}
+    num_peft_adapters: Optional[int] = field(
+        default=None, metadata={"help": "Num peft adapters across layers. For wandb"}
     )
-    k: Optional[int] = field(
-        default=None,
-        metadata={"help": "Number active adapters for WeightLora. Must be less or equal to num_peft_adapters."}
+    k: int = field(
+        default=0,
+        metadata={"help": "Number active adapters for WeightLora. Must be less or equal to num_peft_adapters."},
     )
-    learning_rate_w: Optional[float] = field(
-        default=None,
-        metadata={"help": "Learning rate for weights in Weight LoRA"}
+    learning_rate_w: float = field(default=5e-3, metadata={"help": "Learning rate for weights in Weight LoRA"})
+    use_tuned_learning_rate: bool = field(
+        default=False, metadata={"help": "Load the learning rate from the experiment's tuned_params.json file"}
     )
-    compression_name: Optional[str] = field(
-        default=None,
-        metadata={"help": "ICLR KAWASAKI"}
-    )
-    compression_rate: Optional[float] = field(
-        default=None,
-        metadata={"help": "ICLR KAWASAKI"}
-    )
-    K_compress: Optional[int] = field(
-        default=None,
-        metadata={"help": "ICLR KAWASAKI"}
-    )
-    b: Optional[float] = field(
-        default=None,
-        metadata={"help": "ICLR KAWASAKI"}
-    )
-    use_rand: Optional[bool] = field(
-        default=None,
-        metadata={"help": "If true, then we use random weights in WeightLoRA"}
-    )
-    use_fat: Optional[bool] = field(
-        default=None,
-        metadata={"help": "If true, then we use fatness in WeightLoRA"}
-    )
-    fat_step: Optional[int] = field(
-        default=None,
-        metadata={"help": "Fat steps for weight lora"}
-    )
-    max_fat_steps: Optional[int] = field(
-        default=None,
-        metadata={"help": "Max steps of fatting of lora. For weight lora"}
-    )
-    lora_extention: Optional[str] = field(
-        default=None,
-        metadata={"help": "How to extednd adapters in SimplexLoRA. Can be smart ot dummy"}
+    compression_name: Optional[str] = field(default=None, metadata={"help": "ICLR KAWASAKI"})
+    compression_rate: Optional[float] = field(default=None, metadata={"help": "ICLR KAWASAKI"})
+    K_compress: Optional[int] = field(default=None, metadata={"help": "ICLR KAWASAKI"})
+    b: Optional[float] = field(default=None, metadata={"help": "ICLR KAWASAKI"})
+    use_rand: bool = field(default=False, metadata={"help": "If true, then we use random weights in WeightLoRA"})
+    use_fat: bool = field(default=False, metadata={"help": "If true, then we use fatness in WeightLoRA"})
+    fat_step: int = field(default=10, metadata={"help": "Fat steps for weight lora"})
+    max_fat_steps: int = field(default=5, metadata={"help": "Max steps of fatting of lora. For weight lora"})
+    lora_extention: str = field(
+        default="smart", metadata={"help": "How to extednd adapters in SimplexLoRA. Can be smart ot dummy"}
     )
     optimizer_type: Optional[str] = field(
-        default="AdamW",
-        metadata={"help": "Type of optimizer to use. Options: AdamW, GradientDiffSGD"}
+        default="AdamW", metadata={"help": "Type of optimizer to use. Options: AdamW, GradientDiffSGD"}
     )
     max_batches_accumulating: Optional[int] = field(
         default=10,
-        metadata={"help": "Maximum number of batches to use for full gradient computation in GradientDiffSGD"}
+        metadata={"help": "Maximum number of batches to use for full gradient computation in GradientDiffSGD"},
     )
