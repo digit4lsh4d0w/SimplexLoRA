@@ -43,8 +43,14 @@ with conda or pip.
 ```bash
 uv run ruff check .
 uv run python -m unittest discover -s tests -v
+uv check --no-project
 uv build --all-packages
 ```
+
+`uv check` type-checks the complete package under `src/` and the test suite
+configured by `[tool.ty.src]`. The `--no-project` flag avoids a uv 0.13 metadata
+failure caused by the intentionally conflicting CUDA and ROCm extras; it does
+not disable any ty diagnostics.
 
 ## Project layout
 
