@@ -7,7 +7,7 @@ do
     do
         for seed in 18
         do
-            CUDA_VISIBLE_DEVICES=2 python ./nlg_experiment/run_nlg.py \
+            CUDA_VISIBLE_DEVICES=2 uv run python ./nlg_experiment/run_nlg.py \
                 --dataset_name xsum \
                 --model_name_or_path facebook/bart-large \
                 --per_device_train_batch_size 32 \

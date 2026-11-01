@@ -2,7 +2,7 @@ for r in 8 32 64 128 256
 do
     for ((k=1;k<=36;k++));
     do
-        CUDA_VISIBLE_DEVICES=0 python additional_experiments/run_memory.py \
+        CUDA_VISIBLE_DEVICES=0 uv run python additional_experiments/run_memory.py \
             --dataset_name glue \
             --task_name mnli \
             --model_name_or_path microsoft/deberta-v3-base \

@@ -21,7 +21,7 @@ do
 
     for seed in 10 57 108
     do
-            python ./run_experiment/run_experiment.py \
+            uv run python ./run_experiment/run_experiment.py \
                 --dataset $dataset \
                 --seed $seed \
                 --model Qwen/Qwen3-8B \

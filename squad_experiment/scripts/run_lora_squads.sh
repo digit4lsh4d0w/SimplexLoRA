@@ -4,7 +4,7 @@ for r in 1 2 4 8
 do
     for seed in 18 52 1917
     do
-        CUDA_VISIBLE_DEVICES=3 python ./squad_experiment/run_squad.py \
+        CUDA_VISIBLE_DEVICES=3 uv run python ./squad_experiment/run_squad.py \
         --dataset_name squad_v2 \
         --model_name_or_path microsoft/deberta-v3-base \
         --per_device_train_batch_size 32 \
