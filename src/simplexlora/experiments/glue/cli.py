@@ -182,7 +182,7 @@ def main():
         run_model_name = model_args.model_name_or_path
     run_name += f' {run_model_name} {data_args.task_name}, lr={training_args.learning_rate}'
     training_args.run_name = run_name
-    training_args.output_dir = f"./glue_experiment/{training_args.output_dir}/{run_name}"
+    training_args.output_dir = f"./outputs/glue/{training_args.output_dir}/{run_name}"
     os.environ["WANDB_TAGS"] = f"{run_model_name} GLUE {data_args.task_name}"
     if optimizer is not None:
         training_args.optimizer = optimizer.__class__.__name__

@@ -42,6 +42,7 @@ with conda or pip.
 
 ```bash
 uv run ruff check .
+uv run python -m unittest discover -s tests -v
 uv build --all-packages
 ```
 
@@ -52,6 +53,7 @@ The installable package uses the uv `src` layout:
 ```text
 src/simplexlora/             core configuration, optimizers and utilities
 src/simplexlora/experiments/ runnable experiment modules and CLI entry points
+src/simplexlora/experiments/configs/ TOML experiment matrices
 src/simplexlora/tools/       maintenance utilities
 peft/                        local workspace member with SimplexLoRA PEFT changes
 ```
@@ -85,6 +87,14 @@ uv run jupytext --to py:percent path/to/external.ipynb
 Run experiments through their uv-managed entry points:
 
 ```bash
+uv run simplexlora-grid --help
+uv run simplexlora-grid glue-deberta --dry-run
+uv run simplexlora-grid glue-deberta --select simplex
+uv run simplexlora-grid nlg --select lora
+uv run simplexlora-grid squad --select simplex-lora
+uv run simplexlora-grid qwen
+uv run simplexlora-grid additional --select memory
+
 uv run simplexlora-glue --help
 uv run simplexlora-nlg --help
 uv run simplexlora-squad --help
@@ -94,8 +104,11 @@ uv run simplexlora-memory --help
 uv run python additional_experiments/visualization.py
 ```
 
-Experiment launch examples remain in the corresponding `*/scripts/`
-directories.
+Built-in grid configurations cover GLUE DeBERTa, NLG, SQuAD, Qwen and the
+memory/dot-product experiments. Use `--resume` to skip successful runs recorded
+in the JSON manifest and `--keep-going` to continue after failures. See the
+[grid configuration guide](./src/simplexlora/experiments/configs/README.md) for
+the TOML schema.
 
 ## Decompilation training
 

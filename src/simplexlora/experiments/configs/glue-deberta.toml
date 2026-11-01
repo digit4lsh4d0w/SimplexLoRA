@@ -1,0 +1,154 @@
+[settings]
+manifest = "outputs/grid/glue-deberta.json"
+default_select = ["simplex", "lora"]
+stop_on_error = true
+
+[settings.defaults]
+env = { CUDA_VISIBLE_DEVICES = "6" }
+
+[settings.defaults.arguments]
+dataset_name = "glue"
+model_name_or_path = "microsoft/deberta-v3-base"
+per_device_train_batch_size = 16
+per_device_eval_batch_size = 16
+gradient_accumulation_steps = 6
+lr_scheduler_type = "linear"
+lora_dropout = 0.05
+report_to = "wandb"
+
+[[experiment]]
+name = "simplex"
+command = "simplexlora-glue"
+env = { CUDA_VISIBLE_DEVICES = "5" }
+
+[experiment.matrix]
+seed = [52, 1917]
+
+[experiment.arguments]
+task_name = "rte"
+per_device_train_batch_size = 32
+learning_rate = 5e-5
+warmup_steps = 30
+learning_rate_w = 5e0
+num_train_epochs = 50
+eval_strategy = "epoch"
+save_strategy = "no"
+ft_strategy = "WeightLoRA"
+lora_r = 8
+lora_alpha = 32
+use_fat = true
+fat_step = 5
+max_fat_steps = 3
+lora_extention = "smart"
+do_eval = true
+do_predict = false
+
+[[experiment]]
+name = "lora"
+command = "simplexlora-glue"
+env = { CUDA_VISIBLE_DEVICES = "1" }
+
+[experiment.matrix]
+task_name = ["mrpc"]
+lora_r = [1, 2, 4, 8]
+seed = [18, 52, 1917]
+
+[experiment.arguments]
+learning_rate = "tuned"
+warmup_steps = 100
+num_train_epochs = 30
+eval_strategy = "epoch"
+save_strategy = "no"
+ft_strategy = "LoRA"
+lora_alpha = 32
+do_eval = true
+do_predict = false
+
+[[experiment]]
+name = "vera"
+command = "simplexlora-glue"
+
+[experiment.arguments]
+task_name = "mrpc"
+learning_rate = 8e-3
+warmup_steps = 100
+max_steps = 512
+eval_steps = 64
+save_steps = 256
+ft_strategy = "VERA"
+lora_r = 1024
+
+[[experiment]]
+name = "dora"
+command = "simplexlora-glue"
+
+[experiment.arguments]
+task_name = "mrpc"
+learning_rate = 8e-4
+warmup_steps = 100
+max_steps = 512
+eval_steps = 64
+save_steps = 256
+ft_strategy = "DoRA"
+lora_r = 8
+lora_alpha = 32
+
+[[experiment]]
+name = "rslora"
+command = "simplexlora-glue"
+
+[experiment.arguments]
+task_name = "mrpc"
+learning_rate = 8e-4
+warmup_steps = 100
+max_steps = 512
+eval_steps = 64
+save_steps = 256
+ft_strategy = "rsLoRA"
+lora_r = 8
+lora_alpha = 32
+
+[[experiment]]
+name = "loha"
+command = "simplexlora-glue"
+
+[experiment.arguments]
+task_name = "mrpc"
+learning_rate = 8e-4
+warmup_steps = 100
+max_steps = 512
+eval_steps = 64
+save_steps = 256
+ft_strategy = "LoHA"
+lora_r = 8
+lora_alpha = 32
+
+[[experiment]]
+name = "lokr"
+command = "simplexlora-glue"
+
+[experiment.arguments]
+task_name = "mrpc"
+learning_rate = 8e-4
+warmup_steps = 100
+max_steps = 512
+eval_steps = 64
+save_steps = 256
+ft_strategy = "LoKR"
+lora_r = 32
+lora_alpha = 32
+
+[[experiment]]
+name = "adalora"
+command = "simplexlora-glue"
+
+[experiment.arguments]
+task_name = "mrpc"
+learning_rate = 8e-4
+warmup_steps = 100
+max_steps = 512
+eval_steps = 64
+save_steps = 256
+ft_strategy = "ADALoRA"
+lora_r = 8
+lora_alpha = 32

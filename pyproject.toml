@@ -29,6 +29,7 @@ dependencies = [
 simplexlora-decompile = "simplexlora.experiments.decompile:main"
 simplexlora-dotprod = "simplexlora.experiments.dotprod:main"
 simplexlora-glue = "simplexlora.experiments.glue.cli:main"
+simplexlora-grid = "simplexlora.experiments.grid:main"
 simplexlora-llm = "simplexlora.experiments.llm.cli:main"
 simplexlora-memory = "simplexlora.experiments.memory:main"
 simplexlora-nlg = "simplexlora.experiments.nlg.cli:main"

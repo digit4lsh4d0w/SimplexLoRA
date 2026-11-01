@@ -124,7 +124,7 @@ def main():
         run_name = f"[{training_args.ft_strategy} r={training_args.lora_r}]"
     run_name += f" {data_args.dataset_name} lr={training_args.learning_rate}"
     training_args.run_name = run_name
-    training_args.output_dir = f"./squad_experiment/{training_args.output_dir}/{run_name}"
+    training_args.output_dir = f"./outputs/squad/{training_args.output_dir}/{run_name}"
     os.environ["WANDB_TAGS"] = f"{data_args.dataset_name} NEW"
     if optimizer is not None:
         training_args.optimizer = optimizer.__class__.__name__

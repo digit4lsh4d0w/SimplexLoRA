@@ -1,0 +1,47 @@
+[settings]
+manifest = "outputs/grid/qwen.json"
+stop_on_error = true
+
+[settings.defaults]
+env = { CUDA_VISIBLE_DEVICES = "1", TOKENIZERS_PARALLELISM = "false" }
+
+[[experiment]]
+name = "qwen3-8b"
+command = "simplexlora-llm"
+
+[experiment.matrix]
+strategy = [
+    { ft_strategy = "SimplexLoRA", learning_rate = 8e-5, dataset = "boolq", lora_r = 1 },
+    { ft_strategy = "LoRA", learning_rate = 1e-4, dataset = "boolq", lora_r = 1 },
+]
+seed = [10, 57, 108]
+
+[experiment.arguments]
+dataset = "{dataset}"
+seed = "{seed}"
+model = "Qwen/Qwen3-8B"
+padding_side = "left"
+optimizer = "adamw"
+batch_size = 4
+gradient_accumulation_steps = 1
+learning_rate = "{learning_rate}"
+weight_decay = 1e-4
+weight_decay_w = 1e-4
+learning_rate_w = 5e0
+lr_scheduler_type = "linear"
+warmup_ratio = 0.1
+max_train_steps = 3500
+max_seq_length = 512
+logging_steps = 1
+ft_strategy = "{ft_strategy}"
+lora_r = "{lora_r}"
+lora_alpha = 32
+lora_dropout = 0.05
+quantization_bit = 4
+dtype = "bfloat16"
+use_fast_tokenizer = true
+max_eval_samples = 1000
+max_fat_steps = 1
+fat_step = 5
+eval_steps = 250
+wandb = true

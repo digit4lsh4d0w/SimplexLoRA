@@ -1,0 +1,108 @@
+[settings]
+manifest = "outputs/grid/nlg.json"
+stop_on_error = true
+
+[settings.defaults]
+env = { CUDA_VISIBLE_DEVICES = "2" }
+
+[settings.defaults.arguments]
+model_name_or_path = "facebook/bart-large"
+lr_scheduler_type = "linear"
+num_train_epochs = 15
+eval_strategy = "epoch"
+save_strategy = "no"
+lora_alpha = 32
+lora_dropout = 0.05
+predict_with_generate = true
+max_source_length = 256
+max_target_length = 160
+val_max_target_length = 256
+max_train_samples = 5000
+max_val_samples = 1000
+num_beams = 8
+report_to = "wandb"
+
+[[experiment]]
+name = "lora"
+command = "simplexlora-nlg"
+
+[experiment.matrix]
+lora_r = [1, 2, 4, 8]
+ft_strategy = ["SimplexLoRA", "LoRA"]
+dataset = [
+    { dataset_name = "xsum", dataset_config = "" },
+    { dataset_name = "cnn_dailymail", dataset_config = "3.0.0" },
+]
+learning_rate = [8e-5, 5e-5, 1e-4, 3e-4, 5e-4, 8e-4, 1e-3]
+seed = [18, 57, 100]
+
+[experiment.arguments]
+dataset_name = "{dataset_name}"
+dataset_config = "{dataset_config}"
+per_device_train_batch_size = 8
+per_device_eval_batch_size = 32
+gradient_accumulation_steps = 16
+learning_rate = "{learning_rate}"
+warmup_steps = 50
+weight_decay = 1e-1
+weight_decay_w = 1e-4
+learning_rate_w = 5e0
+ft_strategy = "{ft_strategy}"
+lora_r = "{lora_r}"
+use_fat = true
+fat_step = 5
+max_fat_steps = 1
+lora_extention = "smart"
+seed = "{seed}"
+do_eval = true
+do_predict = false
+
+[[experiment]]
+name = "weight-lora"
+command = "simplexlora-nlg"
+env = { CUDA_VISIBLE_DEVICES = "0" }
+
+[experiment.matrix]
+lora_r = [1, 2, 4]
+learning_rate = [5e-5, 8e-5, 1e-4]
+seed = [18]
+
+[experiment.arguments]
+dataset_name = "xsum"
+per_device_train_batch_size = 32
+per_device_eval_batch_size = 32
+gradient_accumulation_steps = 6
+learning_rate = "{learning_rate}"
+warmup_steps = 0
+learning_rate_w = 5e0
+ft_strategy = "WeightLoRA"
+lora_r = "{lora_r}"
+k = 20
+seed = "{seed}"
+
+[[experiment]]
+name = "simplex-lora"
+command = "simplexlora-nlg"
+
+[experiment.matrix]
+lora_r = [1, 2, 4, 8]
+learning_rate = [3e-5, 5e-5, 8e-5]
+seed = [18]
+
+[experiment.arguments]
+dataset_name = "xsum"
+per_device_train_batch_size = 32
+per_device_eval_batch_size = 32
+gradient_accumulation_steps = 6
+learning_rate = "{learning_rate}"
+warmup_steps = 50
+learning_rate_w = 5e0
+ft_strategy = "WeightLoRA"
+lora_r = "{lora_r}"
+use_fat = true
+fat_step = 10
+max_fat_steps = 2
+lora_extention = "smart"
+seed = "{seed}"
+do_eval = true
+do_predict = false

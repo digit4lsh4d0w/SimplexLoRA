@@ -1,0 +1,78 @@
+[settings]
+manifest = "outputs/grid/squad.json"
+stop_on_error = true
+
+[settings.defaults]
+
+[settings.defaults.arguments]
+dataset_name = "squad_v2"
+model_name_or_path = "microsoft/deberta-v3-base"
+per_device_train_batch_size = 32
+per_device_eval_batch_size = 32
+gradient_accumulation_steps = 6
+lr_scheduler_type = "linear"
+num_train_epochs = 10
+eval_strategy = "epoch"
+save_strategy = "no"
+lora_alpha = 32
+lora_dropout = 0.05
+do_eval = true
+do_predict = false
+report_to = "wandb"
+
+[[experiment]]
+name = "lora"
+command = "simplexlora-squad"
+env = { CUDA_VISIBLE_DEVICES = "3" }
+
+[experiment.matrix]
+lora_r = [1, 2, 4, 8]
+seed = [18, 52, 1917]
+
+[experiment.arguments]
+learning_rate = "tuned"
+num_train_epochs = 3
+ft_strategy = "LoRA"
+lora_r = "{lora_r}"
+seed = "{seed}"
+
+[[experiment]]
+name = "weight-lora"
+command = "simplexlora-squad"
+env = { CUDA_VISIBLE_DEVICES = "6" }
+
+[experiment.matrix]
+lora_r = [4, 8]
+learning_rate = [1e-4]
+seed = [52]
+
+[experiment.arguments]
+learning_rate = "{learning_rate}"
+learning_rate_w = 5e0
+ft_strategy = "WeightLoRA"
+lora_r = "{lora_r}"
+k = 20
+fat_step = 1
+seed = "{seed}"
+
+[[experiment]]
+name = "simplex-lora"
+command = "simplexlora-squad"
+env = { CUDA_VISIBLE_DEVICES = "7" }
+
+[experiment.matrix]
+lora_r = [4, 8]
+learning_rate = [8e-5]
+seed = [52]
+
+[experiment.arguments]
+learning_rate = "{learning_rate}"
+warmup_steps = 50
+learning_rate_w = 5e0
+ft_strategy = "WeightLoRA"
+lora_r = "{lora_r}"
+use_fat = true
+fat_step = 5
+max_fat_steps = 2
+lora_extention = "smart"
+seed = "{seed}"
