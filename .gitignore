@@ -5,3 +5,5 @@ __pycache__/
 .ruff_cache/
 .uv-cache/
 outputs/
+*.ipynb
+.ipynb_checkpoints/

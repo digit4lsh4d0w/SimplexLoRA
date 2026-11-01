@@ -42,16 +42,26 @@ with conda or pip.
 uv run ruff check .
 ```
 
-## Notebooks
+## Notebook sources
 
-The notebooks are converted to Python with the locked `nbconvert` version:
+Notebook sources are stored as Jupytext `py:percent` scripts. The `.py` files
+are the canonical, version-controlled form; `.ipynb` files are ignored. Keep
+markdown sections in `# %% [markdown]` cells so that the method notes and
+experiment context remain part of the source.
+
+To inspect or run a source as a temporary notebook, convert it outside the
+repository:
 
 ```bash
-uv run jupyter-nbconvert --to script path/to/notebook.ipynb --output notebook
+uv run jupytext --to notebook additional_experiments/visualization.py \
+  --output /tmp/visualization.ipynb
 ```
 
-The visualization notebook has already been exported to
-`additional_experiments/visualization.py`.
+When importing an external notebook, convert it directly to the project format:
+
+```bash
+uv run jupytext --to py:percent path/to/external.ipynb
+```
 
 ## Run experiments
 

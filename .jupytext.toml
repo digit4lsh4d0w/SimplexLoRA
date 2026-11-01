@@ -1,0 +1,2 @@
+# Keep notebook sources as reviewable, diff-friendly Python percent scripts.
+formats = "py:percent"
