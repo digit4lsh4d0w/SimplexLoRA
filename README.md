@@ -62,6 +62,97 @@ PEFT installation means future PEFT releases can still provide their other
 bug fixes and tuners, but the hook must be re-registered before loading a
 Simplex LoRA adapter.
 
+## ToDo: PEFT plugin parity and validation
+
+The current plugin reproduced the vendored implementation in one 50-step
+Qwen2.5-Coder-7B NF4 run: it selected the same layers for all five
+Simplex projections and produced the same final rank distribution. The
+following checks are still required before treating the implementations as
+fully interchangeable.
+
+- [ ] **Test quantized merge and unmerge separately for 4-bit and 8-bit BnB.**
+  Load a small quantized model, run one fixed batch, and save its logits before
+  merging. Set deterministic values for `lora_A`, `lora_B`, and `lora_weight`,
+  call `merge_adapter()`, compare logits, then call `unmerge_adapter()` and
+  compare both logits and base weights. Run this on ROCm and CUDA and record
+  finite-value checks, maximum absolute error, and relative error. Do not use
+  the same tolerance for NF4/INT8 and bf16: quantized merge may introduce
+  expected rounding drift. The current plugin wraps quantized layers through
+  the generic `nn.Linear` mapping, while the vendored implementation had
+  specialized BnB LoRA classes.
+
+- [ ] **Test checkpoint interoperability in both directions.**
+  Save an adapter with the vendored PEFT and load it with the public-PEFT
+  plugin; then perform the reverse operation. In both cases use
+  `load_simplex_lora_config()` or `load_simplex_peft_model()` before loading
+  weights, verify that every expected `lora_weight` key exists, and compare
+  fixed-batch logits with the source model. Record how the old
+  `use_weight_lora` config field is handled by current PEFT and confirm that no
+  adapter weights are silently dropped. Repeat with 4-bit base weights.
+
+- [ ] **Test save, reload, and resume after a rank-update cycle.**
+  Save a checkpoint immediately after at least one `fat_step`, restore the
+  model and optimizer state, and continue for another complete cycle. Verify
+  that `lora_weight` objects and optimizer references still point to the same
+  parameters, that configured ranks are restored, and that the resumed loss
+  trajectory matches an uninterrupted run within expected floating-point
+  tolerance.
+
+- [ ] **Test multiple adapters and mixed-adapter batches.**
+  Attach two Simplex adapters to the same model, verify `set_adapter()`,
+  `enable_adapters()`, `disable_adapters()`, `delete_adapter()`, and
+  `adapter_names` forwarding. For mixed batches, compare the result against
+  separate per-adapter forward passes and confirm that each `lora_weight` is
+  applied only to its own sub-batch.
+
+- [ ] **Define and test supported layer types and LoRA options.**
+  Document that the current custom module targets `nn.Linear` and subclasses,
+  including BnB linear layers. Add explicit tests or validation errors for
+  `use_dora`, `lora_bias`, `use_qalora`, multi-adapter variants, and other PEFT
+  LoRA variants. In particular, verify whether `lora_bias=True` must multiply
+  the bias contribution by `lora_weight`; if that behavior is not implemented,
+  reject `lora_bias=True` instead of silently producing a different update.
+
+- [ ] **Monitor the experimental PEFT custom-module API.**
+  `_register_custom_module()` is private and may change even in a patch or minor
+  PEFT release. Run the CPU and GPU plugin tests whenever PEFT is updated.
+  Compare release notes and the implementation of `LoraConfig`,
+  `LoraModel._create_new_module()`, BnB dispatch, and adapter state-dict key
+  handling. Add an upper dependency bound only if compatibility testing shows
+  that a release actually breaks the plugin, rather than pre-emptively.
+
+- [ ] **Evaluate importance estimation with a representative calibration set.**
+  Use multiple data seeds and the paper's calibration budget rather than a
+  single 50-example run: 50 optimizer steps with batch 4 gives 200 examples;
+  batch 16 gives 800. Report the distribution after every projection, including
+  entropy, effective number of layers, top-k share, zero-rank layers, and rank
+  totals. Confirm that the selected layers remain stable across seeds and are
+  not an artifact of one small sample. Keep `weight_lr` as an explicit
+  sensitivity parameter because the current objective can become
+  winner-take-all.
+
+- [ ] **Export the final layer plan before the final adapter reset.**
+  `_final_lora_rank_update()` replaces the selected A/B matrices and fixes
+  `lora_weight` at one. Add a stable exporter that records the final projection
+  weights and rank plan before that reset, preferably as `layer_plan.json` with
+  module names, ranks, weights, and total rank budget. Use this file as the
+  handoff format for Unsloth instead of parsing training logs.
+
+- [ ] **Validate the Unsloth handoff end to end.**
+  Load Qwen2.5-Coder in Unsloth, apply the exported ranks through
+  `rank_pattern`, train with the same data and parameter budget as a standard
+  LoRA control, and evaluate on a held-out split. Compare task quality,
+  trainable parameters, peak VRAM, tokens per second, and final adapter size.
+  The 50-step Simplex phase is only rank calibration; meaningful model quality
+  must be measured after the subsequent optimized LoRA training.
+
+- [ ] **Add repeatable GPU regression tests.**
+  Keep ordinary unit tests CPU-only, but add opt-in pytest markers for
+  ROCm/CUDA tests covering BnB forward/backward, rank changes, merge/unmerge,
+  checkpoint reload, and a tiny end-to-end calibration run. Record the GPU
+  architecture, PyTorch, PEFT, Transformers, and bitsandbytes versions in every
+  test report so numerical differences can be separated from backend changes.
+
 ## Checks
 
 ```bash
