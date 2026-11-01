@@ -1,10 +1,13 @@
-import os
-import numpy as np
-from datasets import load_dataset, load_metric
 import collections
+import json
+import logging
+import os
+
+import numpy as np
+from datasets import load_dataset
+from evaluate import load
 from typing import Optional, Tuple
 from tqdm.auto import tqdm
-import logging
 
 from transformers import (
     EvalPrediction,
@@ -221,6 +224,13 @@ def postprocess_qa_predictions(
             null_odds_file = os.path.join(
                 output_dir, "null_odds.json" if prefix is None else f"{prefix}_null_odds.json"
             )
+        with open(prediction_file, "w", encoding="utf-8") as writer:
+            json.dump(all_predictions, writer, indent=4)
+        with open(nbest_file, "w", encoding="utf-8") as writer:
+            json.dump(all_nbest_json, writer, indent=4)
+        if version_2_with_negative:
+            with open(null_odds_file, "w", encoding="utf-8") as writer:
+                json.dump(scores_diff_json, writer, indent=4)
     return all_predictions
 
 def squad_preprocess(data_args, training_args, model_args):
@@ -535,7 +545,7 @@ def squad_preprocess(data_args, training_args, model_args):
         references = [{"id": ex["id"], "answers": ex[answer_column_name]} for ex in examples]
         return EvalPrediction(predictions=formatted_predictions, label_ids=references)
 
-    metric = load_metric("squad_v2" if data_args.version_2_with_negative else "squad")
+    metric = load("squad_v2" if data_args.version_2_with_negative else "squad")
 
     def compute_metrics(p: EvalPrediction):
         return metric.compute(predictions=p.predictions, references=p.label_ids)

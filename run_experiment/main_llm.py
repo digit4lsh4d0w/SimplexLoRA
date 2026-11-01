@@ -1,9 +1,20 @@
-import torch, os, sys, wandb, peft
-import torch.nn as nn
+import torch
+import os
+import sys
+import wandb
+import peft
 import datasets
-import math
 
 from loguru import logger
+from transformers import (
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    BitsAndBytesConfig,
+    DataCollatorForLanguageModeling,
+    Trainer,
+    TrainingArguments,
+    pipeline,
+)
 
 sys.path.append(os.getcwd())
 from src import (
@@ -11,7 +22,6 @@ from src import (
     utils
 )
 
-import config
 from utils_llm import DatasetRegistry
 
 import warnings
@@ -22,16 +32,6 @@ DATASETS = [
     "singleeq", "strategyqa", "svamp", "bigbench_date", "object_tracking",
     "coin_flip", "last_letters", "mathqa",  "hella_swag", "arc_challenge",
 ]
-
-from transformers import (
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    Trainer,
-    TrainingArguments,
-    BitsAndBytesConfig,
-    DataCollatorForLanguageModeling,
-    pipeline,
-)
 
 
 class Finetuner:

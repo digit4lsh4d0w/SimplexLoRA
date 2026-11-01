@@ -1,5 +1,7 @@
-from unittest import result
-import torch, gc, os, sys
+import torch
+import gc
+import os
+import sys
 from transformers import (
     Trainer,
     HfArgumentParser
@@ -83,7 +85,7 @@ def main():
         args=training_args,
         train_dataset=train_dataset if training_args.do_train else None,
         eval_dataset=None,
-        tokenizer=tokenizer,
+        processing_class=tokenizer,
         data_collator=data_collator,
         optimizers=[optimizer, None]
     )
@@ -92,7 +94,7 @@ def main():
         args=training_args,
         train_dataset=train_dataset if training_args.do_train else None,
         eval_dataset=None,
-        tokenizer=tokenizer,
+        processing_class=tokenizer,
         data_collator=data_collator,
         optimizers=[optimizer_0, None]
     )

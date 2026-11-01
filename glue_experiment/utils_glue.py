@@ -1,6 +1,7 @@
 import numpy as np
 import logging
-from datasets import load_dataset, load_metric
+from datasets import load_dataset
+from evaluate import load
 from peft import prepare_model_for_kbit_training
 from transformers import (
     PretrainedConfig,
@@ -136,7 +137,10 @@ def glue_preprocess(data_args, training_args, model_args):
 
         # Map labels to IDs (not necessary for GLUE tasks)
         if label_to_id is not None and "label" in examples:
-            result["label"] = [(label_to_id[l] if l != -1 else -1) for l in examples["label"]]
+            result["label"] = [
+                (label_to_id[label] if label != -1 else -1)
+                for label in examples["label"]
+            ]
         return result
 
     datasets = datasets.map(
@@ -169,7 +173,7 @@ def glue_preprocess(data_args, training_args, model_args):
             test_dataset = test_dataset.select(range(data_args.max_test_samples))
     
     # Get the metric function
-    metric = load_metric("glue", data_args.task_name)
+    metric = load("glue", data_args.task_name)
     def compute_metrics(p: EvalPrediction):
         preds = p.predictions[0] if isinstance(p.predictions, tuple) else p.predictions
         preds = np.squeeze(preds) if is_regression else np.argmax(preds, axis=1)

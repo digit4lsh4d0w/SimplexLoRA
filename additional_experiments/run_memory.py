@@ -1,4 +1,7 @@
-import torch, gc, os, sys
+import torch
+import gc
+import os
+import sys
 from transformers import (
     Trainer,
     HfArgumentParser,
@@ -74,7 +77,7 @@ def main():
         args=training_args,
         train_dataset=train_dataset if training_args.do_train else None,
         eval_dataset=eval_dataset if training_args.do_evaluate else None,
-        tokenizer=tokenizer,
+        processing_class=tokenizer,
         data_collator=data_collator,
         optimizers=[optimizer, scheduler]
     )
@@ -83,7 +86,7 @@ def main():
         _ = trainer.train()
         train_memory_gb = torch.cuda.max_memory_allocated() / 2**30
 
-    f_name = f"./additional_experiments/memory_data/mem_"
+    f_name = "./additional_experiments/memory_data/mem_"
     f_name += f"{training_args.lora_r}_{training_args.per_device_train_batch_size}"
     with open(f"{f_name}.txt", "a") as f:
         f.write(f"k={training_args.k}: {train_memory_gb}\n")

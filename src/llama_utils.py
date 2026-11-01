@@ -1,13 +1,13 @@
 import json
 import random
-from sympy import im
 import torch
 import datasets
 import os
 import numpy as np
 import transformers
 import logging
-from datasets import load_dataset, load_metric
+from datasets import load_dataset
+from evaluate import load
 from transformers import (
     PretrainedConfig,
     EvalPrediction,
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # Loading MMLU categories
 if not os.path.exists('./categories.py'):
     os.system("wget https://raw.githubusercontent.com/hendrycks/test/master/categories.py")
-from src.categories import subcategories, categories as categories_inv
+from src.categories import subcategories, categories as categories_inv  # noqa: E402
 
 def print_trainable_parameters(model, verbose=True):
     """
@@ -143,7 +143,6 @@ def mmlu_preporcess(config):
     # )
     # print(tokenizer.chat_template) # = "<prompt_template>"
     # tokenizer.chat_template = tokenizer_mistral.chat_template
-    EOS_TOKEN = tokenizer.eos_token
     mmlu_dataset =  load_dataset("cais/mmlu", config.task_name)
 
     few_shot_datasets = {
@@ -316,7 +315,10 @@ def glue_preprocess(data_args, training_args, model_args):
 
         # Map labels to IDs (not necessary for GLUE tasks)
         if label_to_id is not None and "label" in examples:
-            result["label"] = [(label_to_id[l] if l != -1 else -1) for l in examples["label"]]
+            result["label"] = [
+                (label_to_id[label] if label != -1 else -1)
+                for label in examples["label"]
+            ]
         return result
 
     datasets = datasets.map(
@@ -349,7 +351,7 @@ def glue_preprocess(data_args, training_args, model_args):
             test_dataset = test_dataset.select(range(data_args.max_test_samples))
     
     # Get the metric function
-    metric = load_metric("glue", data_args.task_name)
+    metric = load("glue", data_args.task_name)
     def compute_metrics(p: EvalPrediction):
         preds = p.predictions[0] if isinstance(p.predictions, tuple) else p.predictions
         preds = np.squeeze(preds) if is_regression else np.argmax(preds, axis=1)
@@ -640,10 +642,11 @@ def squad_preprocess(data_args, training_args, model_args):
         test_examples = raw_datasets["test"]
         if data_args.max_predict_samples is not None:
             # We will select sample from whole data
-            predict_examples = predict_examples.select(range(data_args.max_predict_samples))
+            max_predict_samples = min(len(test_examples), data_args.max_predict_samples)
+            test_examples = test_examples.select(range(max_predict_samples))
         # Predict Feature Creation
         with training_args.main_process_first(desc="prediction dataset map pre-processing"):
-            test_dataset = predict_examples.map(
+            test_dataset = test_examples.map(
                 prepare_validation_features,
                 batched=True,
                 num_proc=data_args.preprocessing_num_workers,
@@ -653,8 +656,8 @@ def squad_preprocess(data_args, training_args, model_args):
             )
         if data_args.max_predict_samples is not None:
             # During Feature creation dataset samples might increase, we will select required samples again
-            max_predict_samples = min(len(predict_dataset), data_args.max_predict_samples)
-            predict_dataset = predict_dataset.select(range(max_predict_samples))
+            max_predict_samples = min(len(test_dataset), data_args.max_predict_samples)
+            test_dataset = test_dataset.select(range(max_predict_samples))
 
     # Data collator
     # We have already padded to max length if the corresponding flag is True, otherwise we need to pad in the data
@@ -690,7 +693,7 @@ def squad_preprocess(data_args, training_args, model_args):
         references = [{"id": ex["id"], "answers": ex[answer_column_name]} for ex in examples]
         return EvalPrediction(predictions=formatted_predictions, label_ids=references)
 
-    metric = load_metric("squad_v2" if data_args.version_2_with_negative else "squad")
+    metric = load("squad_v2" if data_args.version_2_with_negative else "squad")
 
     def compute_metrics(p: EvalPrediction):
         return metric.compute(predictions=p.predictions, references=p.label_ids)

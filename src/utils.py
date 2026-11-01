@@ -1,4 +1,7 @@
-import random, torch, peft, os
+import random
+import torch
+import peft
+import os
 import torch.nn as nn
 import numpy as np
 from typing import Callable
@@ -348,7 +351,8 @@ class AdapterLayer(nn.Module):
                                 device=module.weight.device)
         nn.init.zeros_(self.lora_B.weight)
         self.add_weight = add_weight
-        if add_weight: self.w = torch.tensor(1., requires_grad=True)
+        if add_weight:
+            self.w = torch.tensor(1., requires_grad=True)
 
     def forward(self, x):
         frwd_module = self.module(x)

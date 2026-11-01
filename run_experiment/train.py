@@ -177,9 +177,9 @@ def train(
         # Определяем метрику для отслеживания лучшей модели
         # Предполагается, что если есть accuracy, используем её, иначе берём первую доступную метрику
         current_metric = None
-        if f"val_accuracy" in val_results:
+        if "val_accuracy" in val_results:
             current_metric = val_results["val_accuracy"]
-        elif f"val_f1" in val_results:
+        elif "val_f1" in val_results:
             current_metric = val_results["val_f1"]
         else:
             # Если нет конкретной метрики, берем первую, которая не потеря

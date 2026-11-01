@@ -1,6 +1,7 @@
 from argparse import ArgumentParser
 from termcolor import colored
-import os, json
+import os
+import json
 
 from config_ft import set_arguments_ft, print_warnings_ft
 from main_llm import DATASETS as LLM_DATASETS

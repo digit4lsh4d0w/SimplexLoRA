@@ -30,7 +30,7 @@ def filter_log_file(input_file, output_file):
                     if not any(line.startswith(prefix) for prefix in prefixes_to_remove):
                         outfile.write(line)
         
-        print(f"Файл успешно обработан!")
+        print("Файл успешно обработан!")
         print(f"Исходный файл: {input_file}")
         print(f"Результирующий файл: {output_file}")
         

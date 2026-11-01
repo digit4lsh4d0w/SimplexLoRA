@@ -1,11 +1,11 @@
 import math
 import warnings
+from math import ceil
 from typing import Callable
 
 import numpy as np
 import torch
 import torch.optim as optim
-from matplotlib import pyplot as plt
 
 ############################### torch optimizers ###############################
 """
@@ -376,7 +376,8 @@ def proj_simplex_euclidean(x: torch.Tensor, temp=None, tau=0.0001, max_iter=1000
     temp is not used!
     '''
     null = torch.Tensor([0]).to(x.device)
-    func = lambda k: torch.sum(torch.maximum(x - k, null)) - 1
+    def func(k):
+        return torch.sum(torch.maximum(x - k, null)) - 1
     lower = torch.min(x) - 1 / len(x)
     upper = torch.max(x)
 
@@ -939,9 +940,6 @@ class WeightAdamW_old(optim.Optimizer):
                 # print("$"*60)
             ####################################################################
         return loss
-
-
-from math import ceil
 
 
 class Rand:

@@ -1,7 +1,9 @@
-import logging, nltk
+import logging
+import nltk
 import numpy as np
-from datasets import load_dataset, load_metric
-from transformers.utils import is_offline_mode
+from datasets import load_dataset
+from evaluate import load
+from huggingface_hub import is_offline_mode
 from filelock import FileLock
 from peft import prepare_model_for_kbit_training
 import torch
@@ -45,7 +47,7 @@ def nlg_prepocess(data_args, training_args, model_args):
             raise LookupError(
                 "Offline mode: run this script without TRANSFORMERS_OFFLINE first to download nltk data files"
             )
-        with FileLock(".lock") as lock:
+        with FileLock(".lock"):
             nltk.download("punkt_tab", quiet=True)
     if data_args.source_prefix is None and model_args.model_name_or_path in [
         "t5-small",
@@ -238,7 +240,8 @@ def nlg_prepocess(data_args, training_args, model_args):
         # padding in the loss.
         if padding == "max_length" and data_args.ignore_pad_token_for_loss:
             labels["input_ids"] = [
-                [(l if l != tokenizer.pad_token_id else -100) for l in label] for label in labels["input_ids"]
+                [(token if token != tokenizer.pad_token_id else -100) for token in label]
+                for label in labels["input_ids"]
             ]
 
         model_inputs["labels"] = labels["input_ids"]
@@ -310,7 +313,7 @@ def nlg_prepocess(data_args, training_args, model_args):
     )
 
     # Metric
-    metric = load_metric("rouge")
+    metric = load("rouge")
 
     def postprocess_text(preds, labels):
         preds = [pred.strip() for pred in preds]

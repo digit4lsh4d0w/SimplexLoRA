@@ -1,4 +1,6 @@
-import torch, sys, os
+import torch
+import sys
+import os
 
 from config import parse_args
 
