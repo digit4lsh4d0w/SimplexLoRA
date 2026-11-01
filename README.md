@@ -30,13 +30,37 @@ override when targeting a different AMD GPU.
 standard PyPI package index. `uv sync --extra rocm` installs PyTorch and the
 required ROCm SDK packages from the official ROCm 7.14 index.
 
-The root project and local [`peft`](./peft) package form a uv workspace with a
-single [`uv.lock`](./uv.lock). Workspace packages are installed in editable mode;
-`peft` contains the SimplexLoRA modifications and uses the same Python and
-dependency resolution as the root project.
+The project uses the public PEFT release managed through [`uv.lock`](./uv.lock).
+Simplex LoRA is implemented as an out-of-tree PEFT layer in
+`src/simplexlora/peft_plugin.py`; it registers a custom linear module on a
+standard `LoraConfig` and does not replace the installed PEFT package.
 
 Use `uv sync --no-dev` for a runtime-only environment. Do not install packages
 with conda or pip.
+
+## Simplex LoRA plugin
+
+PEFT's custom-module mapping is runtime-only and is not persisted in
+`adapter_config.json`. Use the helpers from `simplexlora.peft_plugin` whenever
+an adapter is created or loaded:
+
+```python
+from simplexlora.peft_plugin import (
+    get_simplex_peft_model,
+    load_simplex_peft_model,
+    make_simplex_lora_config,
+)
+
+config = make_simplex_lora_config(r=64, lora_alpha=128, target_modules=["q_proj", "v_proj"])
+model = get_simplex_peft_model(base_model, config)
+
+restored = load_simplex_peft_model(base_model, "path/to/adapter")
+```
+
+The custom-module hook is marked experimental by PEFT. Keeping an official
+PEFT installation means future PEFT releases can still provide their other
+bug fixes and tuners, but the hook must be re-registered before loading a
+Simplex LoRA adapter.
 
 ## Checks
 
@@ -61,7 +85,7 @@ src/simplexlora/             core configuration, optimizers and utilities
 src/simplexlora/experiments/ runnable experiment modules and CLI entry points
 src/simplexlora/experiments/configs/ TOML experiment matrices
 src/simplexlora/tools/       maintenance utilities
-peft/                        local workspace member with SimplexLoRA PEFT changes
+src/simplexlora/peft_plugin.py Simplex LoRA custom PEFT layer and helpers
 ```
 
 Python entry points are defined in `pyproject.toml`, so experiment code does
