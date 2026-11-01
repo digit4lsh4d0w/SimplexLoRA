@@ -3,10 +3,8 @@ from typing import Protocol, cast
 
 import torch
 import wandb
-import peft
 import datasets
 from peft import PeftMixedModel, PeftModel
-from peft.tuners.lora.layer import LoraLayer
 
 from loguru import logger
 from transformers import (
@@ -22,6 +20,7 @@ from transformers import (
 )
 
 from simplexlora import optimizers, utils
+from simplexlora.peft_plugin import SimplexLoraLinear, get_simplex_peft_model
 from simplexlora.experiments.arguments import as_tokenizer, as_trainer_optimizers
 
 from .data import DatasetBuilder, DatasetRegistry
@@ -159,7 +158,7 @@ class Finetuner:
         peft_args = utils.get_peft_arguments(self.args)
         if peft_args is not None:
             peft_args.task_type = "CAUSAL_LM"
-            self.model = peft.get_peft_model(cast(PreTrainedModel, model), peft_args)
+            self.model = get_simplex_peft_model(cast(PreTrainedModel, model), peft_args)
 
         # Print trainable parameters info
         tr_param_count, all_param_count, tr_persent = utils.print_trainable_params(self.model, verbose=True)
@@ -329,11 +328,11 @@ class Finetuner:
         if self.args.ft_strategy == "SimplexLoRA":
             weight_params = []
             loraAB_params = []
-            lora_layers: list[LoraLayer] = []
+            lora_layers: list[SimplexLoraLinear] = []
             other_params = []
 
             for name, module in model.named_modules():
-                if isinstance(module, LoraLayer):
+                if isinstance(module, SimplexLoraLinear):
                     lora_layers.append(module)
 
             for name, param in model.named_parameters():

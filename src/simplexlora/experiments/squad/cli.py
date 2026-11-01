@@ -2,10 +2,8 @@ import torch
 import gc
 import os
 import wandb
-import peft
 import json
 from typing import cast
-from peft.tuners.lora.layer import LoraLayer
 from pathlib import Path
 from .data import QuestionAnsweringTrainer, squad_preprocess
 from ..arguments import (
@@ -15,6 +13,7 @@ from ..arguments import (
     uses_wandb,
 )
 from simplexlora import optimizers, utils
+from simplexlora.peft_plugin import SimplexLoraLinear, get_simplex_peft_model
 import warnings
 
 warnings.filterwarnings("ignore")
@@ -49,7 +48,7 @@ def main():
     training_args.model_name = model_args.model_name_or_path  # for wandb
     peft_args = utils.get_peft_arguments(training_args)
     if peft_args is not None:
-        model = peft.get_peft_model(model, peft_args)
+        model = get_simplex_peft_model(model, peft_args)
     for name, param in model.named_parameters():
         if "attention.self" not in name and "output.dense" not in name and "intermediate.dence" not in name:
             param.requires_grad = False
@@ -62,7 +61,7 @@ def main():
             training_args.ft_strategy = "SimplexLoRA"
     ######################### Optimizer and Scheduler ##########################
     optimizer, scheduler = None, None
-    lora_layers: list[LoraLayer] = [module for _, module in model.named_modules() if isinstance(module, LoraLayer)]
+    lora_layers = [module for _, module in model.named_modules() if isinstance(module, SimplexLoraLinear)]
     if training_args.use_tuned_learning_rate:
         f_name = Path(__file__).with_name("tuned_params.json")
         with open(f_name) as f:
@@ -77,9 +76,9 @@ def main():
         for name, param in model.named_parameters():
             if not param.requires_grad:
                 continue
-            if "weight_lora_w" in name:
+            if "lora_weight" in name:
                 weight_params.append(param)
-            elif "weight_lora_A" in name or "weight_lora_B" in name:
+            elif "lora_A" in name or "lora_B" in name:
                 loraAB_params.append(param)
         optimizer = optimizers.SimplexAdamW(
             [
@@ -105,9 +104,9 @@ def main():
         for name, param in model.named_parameters():
             if not param.requires_grad:
                 continue
-            if "weight_lora_w" in name:
+            if "lora_weight" in name:
                 weight_params.append(param)
-            elif "weight_lora_A" in name or "weight_lora_B" in name:
+            elif "lora_A" in name or "lora_B" in name:
                 other_params.append(param)
         optimizer = optimizers.WeightAdamW(
             [
@@ -175,7 +174,7 @@ def main():
         if training_args.ft_strategy in ["WeightLoRA", "RandLoRA", "SimplexLoRA"]:
             i = 0
             for name, param in model.named_parameters():
-                if "weight_lora_w" in name:
+                if "lora_weight" in name:
                     if param.sum().item() > 0 and param.requires_grad:
                         i += 1
                         if training_args.model_name == "microsoft/deberta-v3-base":

@@ -2,11 +2,9 @@ import torch
 import gc
 import os
 import wandb
-import peft
 import json
 from pathlib import Path
 from typing import cast
-from peft.tuners.lora.layer import LoraLayer
 from transformers import get_scheduler, Seq2SeqTrainer
 
 from .data import nlg_prepocess
@@ -17,6 +15,7 @@ from ..arguments import (
     uses_wandb,
 )
 from simplexlora import optimizers, utils
+from simplexlora.peft_plugin import SimplexLoraLinear, get_simplex_peft_model
 import warnings
 
 warnings.filterwarnings("ignore")
@@ -40,7 +39,7 @@ def main():
     training_args.model_name = model_args.model_name_or_path  # for wandb
     peft_args = utils.get_peft_arguments(training_args)
     if peft_args is not None:
-        model = peft.get_peft_model(model, peft_args)
+        model = get_simplex_peft_model(model, peft_args)
     num_peft_adapters = utils.count_atapters(model, training_args.ft_strategy)
     if training_args.ft_strategy == "WeightLoRA":
         if training_args.use_rand:
@@ -63,11 +62,11 @@ def main():
     if training_args.ft_strategy == "SimplexLoRA":
         weight_params = []
         loraAB_params = []
-        lora_layers: list[LoraLayer] = []
+        lora_layers: list[SimplexLoraLinear] = []
         other_params = []
 
         for name, module in model.named_modules():
-            if isinstance(module, LoraLayer):
+            if isinstance(module, SimplexLoraLinear):
                 lora_layers.append(module)
 
         for name, param in model.named_parameters():

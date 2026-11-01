@@ -13,8 +13,7 @@ from pathlib import Path
 
 import torch
 from datasets import Dataset, load_from_disk
-from peft import LoraConfig, TaskType, get_peft_model, prepare_model_for_kbit_training
-from peft.tuners.lora.layer import LoraLayer
+from peft import TaskType, prepare_model_for_kbit_training
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
@@ -25,6 +24,7 @@ from transformers import (
 )
 
 from simplexlora import optimizers
+from simplexlora.peft_plugin import SimplexLoraLinear, get_simplex_peft_model, make_simplex_lora_config
 from .arguments import as_tokenizer
 
 
@@ -236,22 +236,21 @@ def load_model_and_tokenizer(args: argparse.Namespace):
         gradient_checkpointing_kwargs={"use_reentrant": False},
     )
 
-    peft_config = LoraConfig(
+    peft_config = make_simplex_lora_config(
         task_type=TaskType.CAUSAL_LM,
         r=args.lora_r,
         lora_alpha=args.lora_alpha,
         lora_dropout=args.lora_dropout,
         bias="none",
         target_modules=TARGET_MODULES,
-        use_weight_lora=True,
     )
-    model = get_peft_model(model, peft_config)
+    model = get_simplex_peft_model(model, peft_config)
     model.print_trainable_parameters()
     return model, tokenizer
 
 
 def build_optimizer(model, args: argparse.Namespace):
-    lora_layers: list[LoraLayer] = [module for _, module in model.named_modules() if isinstance(module, LoraLayer)]
+    lora_layers = [module for _, module in model.named_modules() if isinstance(module, SimplexLoraLinear)]
     lora_ab_params = [
         parameter
         for name, parameter in model.named_parameters()

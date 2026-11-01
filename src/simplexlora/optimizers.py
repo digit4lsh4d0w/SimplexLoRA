@@ -7,7 +7,7 @@ from typing import TypedDict, cast, overload
 import numpy as np
 import torch
 import torch.optim as optim
-from peft.tuners.lora.layer import LoraLayer
+from simplexlora.peft_plugin import SimplexLoraLinear
 
 
 Closure = Callable[[], float]
@@ -460,7 +460,7 @@ class SimplexAdamW(optim.Optimizer):
     def __init__(
         self,
         params,
-        lora_layers: list[LoraLayer],
+        lora_layers: list[SimplexLoraLinear],
         lr: float = 1e-3,
         betas: tuple[float, float] = (0.9, 0.999),
         eps: float = 1e-6,

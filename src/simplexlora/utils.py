@@ -8,6 +8,8 @@ import os
 import torch.nn as nn
 import numpy as np
 
+from .peft_plugin import make_simplex_lora_config
+
 
 Closure = Callable[[], float]
 
@@ -214,7 +216,7 @@ def set_device(device_no: int):
 
 
 def count_atapters(model, peft_type):
-    if peft_type in ["LoRA", "ADALoRA", "DoRA", "rsLoRA", "WeightLoRA", "SimplexLoRA"]:
+    if peft_type in ["LoRA", "ADALoRA", "DoRA", "rsLoRA", "WeightLoRA", "RandLoRA", "SimplexLoRA"]:
         adapter_name = "lora_A"
     elif peft_type == "LoKR":
         adapter_name = "lokr_w1"
@@ -222,8 +224,6 @@ def count_atapters(model, peft_type):
         adapter_name = "hada_w1_a"
     elif peft_type == "VERA":
         adapter_name = "vera_lambda_b"
-    elif peft_type in ["WeightLoRA", "RandLoRA"]:
-        adapter_name = "weight_lora_A"
     elif peft_type == "Full":
         adapter_name = None
     else:
@@ -243,7 +243,7 @@ def apply_rand_weight_lora(model, n, k):
     idxs = torch.randperm(n)[:k]
     i = 0
     for name, param in model.named_parameters():
-        if "weight_lora_w" in name:
+        if "lora_weight" in name:
             param.requires_grad = False
             if i not in idxs:
                 param.data = torch.tensor([0.0])
@@ -260,11 +260,11 @@ def get_peft_arguments(training_args):
         )
     elif training_args.ft_strategy == "LoKR":
         peft_args = peft.LoKrConfig(
-            r=training_args.lora_r, lora_alpha=training_args.lora_alpha, lora_dropout=training_args.lora_dropout
+            r=training_args.lora_r, alpha=training_args.lora_alpha, rank_dropout=training_args.lora_dropout
         )
     elif training_args.ft_strategy == "LoHA":
         peft_args = peft.LoHaConfig(
-            r=training_args.lora_r, lora_alpha=training_args.lora_alpha, lora_dropout=training_args.lora_dropout
+            r=training_args.lora_r, alpha=training_args.lora_alpha, rank_dropout=training_args.lora_dropout
         )
     elif training_args.ft_strategy == "VERA":
         peft_args = peft.VeraConfig(r=training_args.lora_r, vera_dropout=training_args.lora_dropout)
@@ -287,11 +287,10 @@ def get_peft_arguments(training_args):
             use_rslora=True,
         )
     elif training_args.ft_strategy in ["WeightLoRA", "SimplexLoRA"]:
-        peft_args = peft.LoraConfig(
+        peft_args = make_simplex_lora_config(
             r=training_args.lora_r,
             lora_alpha=training_args.lora_alpha,
             lora_dropout=training_args.lora_dropout,
-            use_weight_lora=True,
         )
     elif training_args.ft_strategy == "Full":
         return None
