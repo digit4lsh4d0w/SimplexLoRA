@@ -54,7 +54,7 @@ def main():
                 )
                 num_peft_adapters += 1
     else:
-        raise NotImplementedError("[TODO] add LLama")
+        raise NotImplementedError(f"Unsupported model: {model_args.model_name_or_path}")
     ######################### Optimizer and Scheduler ##########################
     optimizer = torch.optim.AdamW(
         model.parameters(),

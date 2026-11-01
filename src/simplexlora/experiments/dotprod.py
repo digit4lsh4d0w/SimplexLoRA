@@ -64,7 +64,7 @@ def main():
             )
             model_0.deberta.encoder.layer[adapter_i].attention.self.key_proj.weight.requires_grad = True
     else:
-        raise NotImplementedError("[TODO] add LLama")
+        raise NotImplementedError(f"Unsupported model: {model_args.model_name_or_path}")
     ######################### Optimizer and Scheduler ##########################
     optimizer = torch.optim.AdamW(
         model.parameters(),

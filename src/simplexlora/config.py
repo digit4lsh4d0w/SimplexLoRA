@@ -236,7 +236,7 @@ class ModelArguments:
     model_name_or_path: str = field(
         default=None,
         metadata={
-            "help": "Path to pretrained model or model identifier from huggingface.co/models. Possible choises are: microsoft/deberta-v3-base, meta-llama/Meta-Llama-3.1-8B, mistralai/Mistral-7B-Instruct-v0.3, microsoft/deberta-v3-base"
+            "help": "Path to a pretrained model or a model identifier from huggingface.co/models."
         }
     )
     config_name: Optional[str] = field(

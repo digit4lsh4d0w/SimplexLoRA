@@ -176,9 +176,7 @@ def main():
         run_name = f"[{training_args.ft_strategy} fs={training_args.fat_step}, mfs={training_args.max_fat_steps}, r={training_args.lora_r}, wd={training_args.weight_decay}]"
     else:
         run_name = f"[{training_args.ft_strategy} r={training_args.lora_r}]"
-    if model_args.model_name_or_path == "meta-llama/Meta-Llama-3.1-8B":
-        run_model_name = "llama"
-    elif model_args.model_name_or_path == "microsoft/deberta-v3-base":
+    if model_args.model_name_or_path == "microsoft/deberta-v3-base":
         run_model_name = "deberta"
     else:
         run_model_name = model_args.model_name_or_path
