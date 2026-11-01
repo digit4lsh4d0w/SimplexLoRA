@@ -13,6 +13,7 @@ from ..arguments import (
     uses_wandb,
 )
 from simplexlora import optimizers, utils
+from simplexlora.calibration import attach_calibration_session, disabled_calibration_session
 from simplexlora.peft_plugin import SimplexLoraLinear, get_simplex_peft_model
 import warnings
 
@@ -146,6 +147,18 @@ def main():
     else:
         training_args.optimizer = training_args.optim
     training_args.benchmark_name = data_args.dataset_name
+    ############################ Calibration Session ############################
+    if training_args.ft_strategy == "SimplexLoRA":
+        calibration_session = attach_calibration_session(
+            model,
+            optimizer,
+            training_args,
+            model_id=model_args.model_name_or_path or "unknown",
+            data={"dataset_name": data_args.dataset_name},
+            device=next(model.parameters()).device,
+        )
+    else:
+        calibration_session = disabled_calibration_session(model, optimizer)
     ############################# Training #####################################
     print("$" * 30, f" {run_name} ", "$" * 30)
     trainer = QuestionAnsweringTrainer(
@@ -163,7 +176,16 @@ def main():
     )
 
     if training_args.do_train:
-        train_result = trainer.train()
+        try:
+            train_result = trainer.train()
+        except KeyboardInterrupt:
+            calibration_session.close(interrupted=True)
+            raise
+        except BaseException:
+            calibration_session.close(failed=True)
+            raise
+        calibration_session.finalize()
+        calibration_session.close()
         train_metrics: dict[str, object] = dict(train_result.metrics)
         max_train_samples = (
             data_args.max_train_samples if data_args.max_train_samples is not None else len(train_dataset)

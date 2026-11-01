@@ -70,6 +70,11 @@ def parse_args():
     )
     parser.add_argument("--seed", default=18, type=int)
 
+    ### Calibration Arguments
+    from simplexlora.calibration import add_calibration_arguments
+
+    add_calibration_arguments(parser)
+
     ### Saving Paths
     parser.add_argument(
         "--results_path",

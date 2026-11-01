@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 from typing import cast
 from transformers import (
-    Trainer,
     get_scheduler,
 )
 
@@ -18,6 +17,11 @@ from ..arguments import (
     uses_wandb,
 )
 from simplexlora import optimizers, utils
+from simplexlora.calibration import (
+    attach_calibration_session,
+    disabled_calibration_session,
+)
+from simplexlora.calibration.trainer import SimplexCalibrationTrainer
 from simplexlora.peft_plugin import SimplexLoraLinear, get_simplex_peft_model
 import warnings
 
@@ -173,6 +177,18 @@ def main():
         optimizer = torch.optim.AdamW(
             model.parameters(), lr=training_args.learning_rate, weight_decay=training_args.weight_decay
         )
+    ############################ Calibration Session ############################
+    if training_args.ft_strategy == "SimplexLoRA":
+        calibration_session = attach_calibration_session(
+            model,
+            optimizer,
+            training_args,
+            model_id=model_args.model_name_or_path or "unknown",
+            data={"dataset_name": data_args.dataset_name, "task_name": data_args.task_name},
+            device=next(model.parameters()).device,
+        )
+    else:
+        calibration_session = disabled_calibration_session(model, optimizer)
     ############################### Wandb Saves ################################
     training_args.all_params, training_args.trainable_params = utils.print_trainable_parameters(model)
     training_args.num_peft_adapters = num_peft_adapters
@@ -203,7 +219,7 @@ def main():
     training_args.tsk_name = data_args.task_name
     ############################# Training #####################################
     print("$" * 30, f" {run_name} ", "$" * 30)
-    trainer = Trainer(
+    trainer = SimplexCalibrationTrainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset if training_args.do_train else None,
@@ -212,10 +228,20 @@ def main():
         processing_class=tokenizer,
         data_collator=data_collator,
         optimizers=as_trainer_optimizers(optimizer, scheduler),
+        calibration_optimizer=optimizer if training_args.ft_strategy == "SimplexLoRA" else None,
     )
 
     if training_args.do_train:
-        train_result = trainer.train()
+        try:
+            train_result = trainer.train()
+        except KeyboardInterrupt:
+            calibration_session.close(interrupted=True)
+            raise
+        except BaseException:
+            calibration_session.close(failed=True)
+            raise
+        calibration_session.finalize()
+        calibration_session.close()
         train_metrics: dict[str, object] = dict(train_result.metrics)
         max_train_samples = (
             data_args.max_train_samples if data_args.max_train_samples is not None else len(train_dataset)

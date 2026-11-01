@@ -350,3 +350,38 @@ class TrainingArguments(Seq2SeqTrainingArguments):
         default=10,
         metadata={"help": "Maximum number of batches to use for full gradient computation in GradientDiffSGD"},
     )
+    ############################# Calibration Arguments ##############################
+    calibration_output_dir: Optional[str] = field(
+        default=None,
+        metadata={"help": "Directory for calibration artifacts (default: <output-dir>/calibration)"},
+    )
+    calibration_top_k: int = field(default=20, metadata={"help": "Size of the reported Top-K"})
+    calibration_only: bool = field(
+        default=False,
+        metadata={"help": "Stop right after fat_step * max_fat_steps optimizer steps"},
+    )
+    calibration_no_artifacts: bool = field(
+        default=False,
+        metadata={"help": "Disable calibration observation entirely"},
+    )
+    calibration_rank_floor: int = field(default=1, metadata={"help": "Minimum applied rank in the handoff"})
+    calibration_alpha_mode: str = field(
+        default="preserve",
+        metadata={"help": "Alpha policy of the Unsloth handoff: preserve or twice_rank"},
+    )
+    calibration_min_weight: float = field(
+        default=0.0,
+        metadata={"help": "Minimum normalized importance for the handoff"},
+    )
+    calibration_unsloth_top_k: Optional[int] = field(
+        default=None,
+        metadata={"help": "Optional Top-K restriction of the Unsloth handoff"},
+    )
+    calibration_overwrite: bool = field(
+        default=False,
+        metadata={"help": "Allow rerunning into a directory with existing calibration artifacts"},
+    )
+    calibration_run_id: Optional[str] = field(
+        default=None,
+        metadata={"help": "Explicit calibration run id"},
+    )

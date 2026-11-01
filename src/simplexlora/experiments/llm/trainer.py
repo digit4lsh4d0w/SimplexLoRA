@@ -20,6 +20,8 @@ from transformers import (
 )
 
 from simplexlora import optimizers, utils
+from simplexlora.calibration import attach_calibration_session, disabled_calibration_session
+from simplexlora.calibration.trainer import SimplexCalibrationTrainer
 from simplexlora.peft_plugin import SimplexLoraLinear, get_simplex_peft_model
 from simplexlora.experiments.arguments import as_tokenizer, as_trainer_optimizers
 
@@ -366,14 +368,26 @@ class Finetuner:
             optimizer = torch.optim.AdamW(
                 model.parameters(), lr=training_args.learning_rate, weight_decay=training_args.weight_decay
             )
-        self.trainer = Trainer(
+        self.trainer = SimplexCalibrationTrainer(
             model=model,
             train_dataset=train_dataset,
             eval_dataset=eval_dataset,
             args=training_args,
             data_collator=DataCollatorForLanguageModeling(tokenizer, mlm=False),
             optimizers=as_trainer_optimizers(optimizer, None),
+            calibration_optimizer=optimizer if self.args.ft_strategy == "SimplexLoRA" else None,
         )
+        if self.args.ft_strategy == "SimplexLoRA":
+            self.calibration_session = attach_calibration_session(
+                model,
+                optimizer,
+                self.args,
+                model_id=str(getattr(self.args, "model", "unknown")),
+                data={"dataset": self.args.dataset},
+                device=next(model.parameters()).device,
+            )
+        else:
+            self.calibration_session = disabled_calibration_session(model, optimizer)
 
         # Clean up memory before training
         import gc
@@ -385,7 +399,16 @@ class Finetuner:
         trainer = self.trainer
         if trainer is None:
             raise RuntimeError("Trainer was not initialized")
-        train_result = trainer.train()
+        try:
+            train_result = trainer.train()
+        except KeyboardInterrupt:
+            self.calibration_session.close(interrupted=True)
+            raise
+        except BaseException:
+            self.calibration_session.close(failed=True)
+            raise
+        self.calibration_session.finalize()
+        self.calibration_session.close()
         metrics = train_result.metrics
         trainer.log_metrics("train", metrics)
         trainer.save_metrics("train", metrics)

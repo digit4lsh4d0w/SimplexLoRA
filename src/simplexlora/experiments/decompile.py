@@ -19,11 +19,19 @@ from transformers import (
     AutoTokenizer,
     BitsAndBytesConfig,
     PreTrainedTokenizerBase,
-    Trainer,
     TrainingArguments,
 )
 
 from simplexlora import optimizers
+from simplexlora.calibration import (
+    StopReason,
+    add_calibration_arguments,
+    build_run_metadata,
+    create_calibration_session,
+    render_console_summary,
+    validate_calibration_arguments,
+)
+from simplexlora.calibration.trainer import SimplexCalibrationTrainer
 from simplexlora.peft_plugin import SimplexLoraLinear, get_simplex_peft_model, make_simplex_lora_config
 from .arguments import as_tokenizer
 
@@ -66,6 +74,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--logging-steps", type=int, default=10)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--offline", action="store_true")
+    add_calibration_arguments(parser)
     return parser.parse_args()
 
 
@@ -288,6 +297,7 @@ def build_optimizer(model, args: argparse.Namespace):
 
 def main() -> None:
     args = parse_args()
+    validate_calibration_arguments(args)
     if args.offline:
         os.environ["HF_HUB_OFFLINE"] = "1"
         os.environ["HF_DATASETS_OFFLINE"] = "1"
@@ -317,6 +327,26 @@ def main() -> None:
     steps_per_epoch = math.ceil(len(train_dataset) / effective_batch_size)
     total_steps = args.max_steps if args.max_steps > 0 else math.ceil(steps_per_epoch * args.num_train_epochs)
     warmup_steps = max(1, int(total_steps * 0.03))
+
+    calibration_only = bool(args.calibration_only)
+    if calibration_only:
+        # Stop exactly after the final projection cycle.
+        total_steps = args.fat_step * args.max_fat_steps
+        warmup_steps = min(warmup_steps, max(1, total_steps // 10))
+
+    run_metadata = build_run_metadata(
+        model,
+        adapter_name="default",
+        args=args,
+        data={
+            "dataset_path": str(dataset_path),
+            "train_examples": len(train_dataset),
+            "validation_examples": len(validation_dataset),
+            "max_seq_length": args.max_seq_length,
+        },
+        device=next(model.parameters()).device,
+    )
+
     training_args = TrainingArguments(
         output_dir=args.output_dir,
         per_device_train_batch_size=args.batch_size,
@@ -325,7 +355,7 @@ def main() -> None:
         learning_rate=args.learning_rate,
         weight_decay=args.weight_decay,
         num_train_epochs=args.num_train_epochs,
-        max_steps=args.max_steps,
+        max_steps=total_steps if calibration_only else args.max_steps,
         lr_scheduler_type="cosine",
         warmup_steps=warmup_steps,
         max_grad_norm=1.0,
@@ -334,9 +364,9 @@ def main() -> None:
         gradient_checkpointing=True,
         gradient_checkpointing_kwargs={"use_reentrant": False},
         logging_steps=args.logging_steps,
-        eval_strategy="steps" if args.eval_steps > 0 else "no",
-        eval_steps=args.eval_steps if args.eval_steps > 0 else None,
-        save_strategy="steps",
+        eval_strategy="no" if calibration_only else ("steps" if args.eval_steps > 0 else "no"),
+        eval_steps=args.eval_steps if (args.eval_steps > 0 and not calibration_only) else None,
+        save_strategy="no" if calibration_only else "steps",
         save_steps=args.save_steps,
         save_total_limit=2,
         save_only_model=True,
@@ -350,7 +380,7 @@ def main() -> None:
         seed=args.seed,
         data_seed=args.seed,
     )
-    trainer = Trainer(
+    trainer = SimplexCalibrationTrainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
@@ -358,21 +388,62 @@ def main() -> None:
         data_collator=CausalLMCollator(tokenizer.pad_token_id),
         optimizers=(optimizer, None),
         processing_class=tokenizer,
+        calibration_optimizer=optimizer,
     )
 
-    result = trainer.train()
-    trainer.save_model(args.output_dir)
-    tokenizer.save_pretrained(args.output_dir)
+    session = create_calibration_session(
+        model=model,
+        optimizer=optimizer,
+        args=args,
+        run_metadata=run_metadata,
+    )
+
+    result = None
+    try:
+        result = trainer.train()
+    except KeyboardInterrupt:
+        session.close(interrupted=True)
+        raise
+    except BaseException:
+        session.close(failed=True)
+        raise
+    session.finalize()
+    session.close(stop_reason=StopReason.CALIBRATION_ONLY if calibration_only else StopReason.TRAINING_COMPLETE)
+
+    if not calibration_only:
+        trainer.save_model(args.output_dir)
+        tokenizer.save_pretrained(args.output_dir)
+    else:
+        # A calibration-only run must not present its reset adapter as a trained model.
+        print("Calibration-only run finished: the adapter was intentionally not saved as a trained model.")
+
+    calibration_summary: dict[str, object] = {}
+    if session.recorder is not None and session.recorder.layer_plan is not None:
+        plan = session.recorder.layer_plan
+        final_snapshot = session.recorder.snapshots[-1] if session.recorder.snapshots else None
+        artifact_paths = session.recorder.artifact_paths
+        calibration_summary = {
+            "calibration_report": str(artifact_paths.report),
+            "layer_plan": str(artifact_paths.layer_plan),
+            "unsloth_handoff": str(artifact_paths.unsloth_handoff)
+            if artifact_paths.unsloth_handoff is not None
+            else None,
+            "calibration_completed": session.recorder.calibration_completed,
+            "selected_module_count": plan.adapter.selected_module_count,
+            "total_rank": plan.adapter.total_rank,
+            "concentration": final_snapshot.metrics.to_dict() if final_snapshot is not None else None,
+        }
 
     peak_allocated_gib = torch.cuda.max_memory_allocated(0) / 2**30
     peak_reserved_gib = torch.cuda.max_memory_reserved(0) / 2**30
     metrics = {
-        **result.metrics,
+        **(result.metrics if result is not None else {}),
         "peak_allocated_gib": peak_allocated_gib,
         "peak_reserved_gib": peak_reserved_gib,
         "train_examples": len(train_dataset),
         "validation_examples": len(validation_dataset),
         "target_modules": TARGET_MODULES,
+        **calibration_summary,
     }
     output_path = Path(args.output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -381,6 +452,14 @@ def main() -> None:
         encoding="utf-8",
     )
     print(json.dumps(metrics, indent=2))
+    if session.recorder is not None:
+        print(
+            render_console_summary(
+                session.recorder.layer_plan,
+                top_k=10,
+                artifact_paths=session.recorder.artifact_paths,
+            )
+        )
 
 
 if __name__ == "__main__":

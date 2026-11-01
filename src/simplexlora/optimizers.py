@@ -2,7 +2,7 @@ import math
 import warnings
 from collections.abc import Callable
 from math import ceil
-from typing import TypedDict, cast, overload
+from typing import Any, TypedDict, cast, overload
 
 import numpy as np
 import torch
@@ -472,6 +472,8 @@ class SimplexAdamW(optim.Optimizer):
         fat_step: int = 10,
         max_fat_steps: int = 3,
         default_lora_rank: int = 16,
+        calibration_observer: object | None = None,
+        legacy_logging: bool = False,
     ):
         if not no_deprecation_warning:
             warnings.warn(
@@ -509,6 +511,158 @@ class SimplexAdamW(optim.Optimizer):
         self.fat_step = fat_step
         self.max_fat_steps = max_fat_steps
 
+        # Calibration observability: optional event sink (see the calibration
+        # package). All hooks are strictly read-only and guarded so that the
+        # optimizer's math is unchanged when no observer is attached.
+        self.calibration_observer: Any | None = calibration_observer
+        self.legacy_logging = legacy_logging
+        self._calibration_microbatch_losses: list[torch.Tensor] = []
+        self._calibration_step = 0
+        self._calibration_projection_count = 0
+        self._calibration_final_reported = False
+        self._calibration_weight_mirror: list[float] = [1.0] * num_adapters
+
+    def add_microbatch_loss(self, loss: torch.Tensor | None) -> None:
+        """Accumulate one micro-batch loss for the next optimizer step.
+
+        Called by ``SimplexCalibrationTrainer.training_step`` with exactly the
+        loss the Trainer uses for its training loss. The accumulated losses are
+        aggregated (mean over micro-batches) and handed to the calibration
+        observer at the beginning of the next ``step()``, then discarded.
+        Pure bookkeeping: no parameter, RNG, gradient or scheduler interaction.
+        """
+        if self.calibration_observer is None or self.max_fat_steps <= 0:
+            return
+        if loss is None or loss.numel() != 1:
+            return
+        self._calibration_microbatch_losses.append(loss.detach())
+
+    def _consume_calibration_loss(self) -> float | None:
+        losses = self._calibration_microbatch_losses
+        self._calibration_microbatch_losses = []
+        if not losses:
+            return None
+        total = torch.stack([loss.reshape(()) for loss in losses]).sum()
+        return (total / len(losses)).item()
+
+    def _calibration_grad_norm(self, group_name: str) -> float:
+        squared: list[torch.Tensor] = []
+        for group in self.param_groups:
+            if group.get("name") != group_name:
+                continue
+            for parameter in group["params"]:
+                if parameter.grad is None:
+                    continue
+                squared.append(parameter.grad.detach().pow(2).sum())
+        if not squared:
+            return 0.0
+        return torch.stack(squared).sum().sqrt().item()
+
+    def _calibration_per_layer_grad_norms(self) -> tuple[list[float], list[float]]:
+        """Per-layer weight/lora grad norms; a single host transfer per array."""
+        weight_norms = [0.0] * len(self._calibration_weight_mirror)
+        group = next((g for g in self.param_groups if g.get("name") == "weight_params"), None)
+        if group is not None:
+            grads: list[torch.Tensor | None] = [
+                parameter.grad for parameter in cast(list[torch.Tensor], group["params"])
+            ]
+            occupied = [index for index, grad in enumerate(grads) if grad is not None]
+            if occupied:
+                values = torch.stack(
+                    [cast(torch.Tensor, grads[index]).detach().reshape(()).abs() for index in occupied]
+                )
+                for position, value in zip(occupied, values.tolist(), strict=False):
+                    weight_norms[position] = float(value)
+
+        adapter = self.lora_layers[0]._active_adapter[0] if self.lora_layers else None
+        lora_norms = [0.0] * len(self._calibration_weight_mirror)
+        if adapter is not None:
+            squared: list[torch.Tensor] = []
+            lora_occupied: list[int] = []
+            for layer_index, layer in enumerate(self.lora_layers):
+                a_weight = cast(torch.nn.Linear, layer.lora_A[adapter]).weight
+                b_weight = cast(torch.nn.Linear, layer.lora_B[adapter]).weight
+                a_grad = a_weight.grad
+                b_grad = b_weight.grad
+                if a_grad is None and b_grad is None:
+                    continue
+                a_sq = a_grad.detach().pow(2).sum() if a_grad is not None else torch.zeros((), device=a_weight.device)
+                b_sq = b_grad.detach().pow(2).sum() if b_grad is not None else torch.zeros((), device=b_weight.device)
+                squared.append(a_sq + b_sq)
+                lora_occupied.append(layer_index)
+            if squared:
+                values = torch.stack(squared).sqrt().tolist()
+                for position, value in zip(lora_occupied, values, strict=False):
+                    lora_norms[position] = float(value)
+        return weight_norms, lora_norms
+
+    def _build_projection_event(
+        self,
+        *,
+        w_vector_old: Any,
+        w_vector: torch.Tensor,
+        new_lora_ranks_all: torch.Tensor,
+        w_before: list[float],
+        weight_group: dict,
+    ) -> object:
+        from simplexlora.calibration.models import ProjectionEvent, utc_now_iso
+
+        chosen_positions = [
+            index
+            for index, parameter in enumerate(weight_group["params"])
+            if parameter.grad is not None and index in self.chosen_layers
+        ]
+
+        mirror = self._calibration_weight_mirror
+        before = list(mirror)
+        after = list(mirror)
+        projected = list(mirror)
+        ranks = [0] * len(mirror)
+        for j, position in enumerate(chosen_positions):
+            before[position] = w_before[j]
+            after[position] = w_vector_old[j]
+            projected[position] = float(w_vector[j])
+            ranks[position] = int(new_lora_ranks_all[j])
+        selected = [rank > 0 for rank in ranks]
+
+        weight_norms, lora_norms = self._calibration_per_layer_grad_norms()
+
+        return ProjectionEvent(
+            step=self._calibration_step,
+            projection_index=self._calibration_projection_count,
+            is_final_projection=self.max_fat_steps == 1,
+            weights_before_step=tuple(before),
+            weights_after_gradient_step=tuple(after),
+            weights_projected=tuple(projected),
+            ranks=tuple(ranks),
+            selected_mask=tuple(selected),
+            loss_at_projection=None,
+            loss_window=None,
+            weight_grad_norms=tuple(weight_norms),
+            lora_grad_norms=tuple(lora_norms),
+            created_at=utc_now_iso(),
+        )
+
+    def _notify_calibration_step(self) -> None:
+        observer = self.calibration_observer
+        if observer is None:
+            return
+        self._calibration_step += 1
+        loss = self._consume_calibration_loss()
+        lora_lr = 0.0
+        for group in self.param_groups:
+            if group.get("name") == "loraAB":
+                lora_lr = float(group["lr"])
+                break
+        observer.on_optimizer_step(
+            step=self._calibration_step,
+            loss=loss,
+            learning_rate=lora_lr,
+            lora_grad_norm=self._calibration_grad_norm("loraAB"),
+            weight_grad_norm=self._calibration_grad_norm("weight_params"),
+            is_projection_step=self._calibration_step % self.fat_step == 0,
+        )
+
     @overload
     def step(self, closure: None = None) -> None: ...
 
@@ -528,19 +682,29 @@ class SimplexAdamW(optim.Optimizer):
             loss = closure()
 
         ######################## StoIHT step for lora weights #########################
+        if self.max_fat_steps > 0 and self.calibration_observer is not None:
+            # Observer hooks are read-only: they receive post-clipping gradient
+            # norms and the aggregated micro-batch loss of this optimizer step.
+            self._notify_calibration_step()
+
         if self.max_fat_steps > 0:
             # weight_params group
             group = list(filter(lambda group: group["name"] == "weight_params", self.param_groups))[0]
 
             w_vector_old = []
+            w_before_step = []
 
             if "w_step" not in group.keys():
                 group["w_step"] = 0
             group["w_step"] += 1
 
+            is_projection_step = group["w_step"] % self.fat_step == 0
             for i, p in enumerate(group["params"]):
                 if p.grad is None or i not in self.chosen_layers:
                     continue
+
+                if self.calibration_observer is not None and is_projection_step:
+                    w_before_step.append(p.data.item())
 
                 p.add_(p.grad, alpha=-group["lr"])
                 if group["wd"] > 0.0:
@@ -570,6 +734,27 @@ class SimplexAdamW(optim.Optimizer):
                 new_lora_ranks_all = torch.ceil(w_vector * self.default_lora_rank).int()
                 # print(f'new_lora_ranks_all = {new_lora_ranks_all}')
 
+                if self.calibration_observer is not None:
+                    # The event is emitted (and the final plan frozen by the
+                    # recorder) strictly BEFORE any rank update, in particular
+                    # before `_final_lora_rank_update` resets lora_A/lora_B.
+                    self._calibration_projection_count += 1
+                    event = self._build_projection_event(
+                        w_vector_old=w_vector_old,
+                        w_vector=w_vector,
+                        new_lora_ranks_all=new_lora_ranks_all,
+                        w_before=w_before_step,
+                        weight_group=group,
+                    )
+                    self.calibration_observer.on_projection(event)
+                    chosen_positions = [
+                        position
+                        for position, parameter in enumerate(group["params"])
+                        if parameter.grad is not None and position in self.chosen_layers
+                    ]
+                    for j, position in enumerate(chosen_positions):
+                        self._calibration_weight_mirror[position] = float(w_vector[j])
+
                 j = 0
                 for i, p in enumerate(group["params"]):
                     if p.grad is None or i not in self.chosen_layers:
@@ -585,8 +770,9 @@ class SimplexAdamW(optim.Optimizer):
 
                 self.chosen_layers = new_chosen_layers
                 self.lora_ranks = torch.tensor(new_lora_ranks_nonzero)
-                print("self.lora_ranks:", {self.lora_ranks})
-                print("New chosen layers:", self.chosen_layers)
+                if self.legacy_logging:
+                    print("self.lora_ranks:", {self.lora_ranks})
+                    print("New chosen layers:", self.chosen_layers)
 
         ####################################################################
 
@@ -688,6 +874,12 @@ class SimplexAdamW(optim.Optimizer):
             self.state[lora_B]["step"] = 0
             self.state[lora_B]["exp_avg"] = torch.zeros_like(lora_B)
             self.state[lora_B]["exp_avg_sq"] = torch.zeros_like(lora_B)
+
+        if self.calibration_observer is not None and self.max_fat_steps == 0 and not self._calibration_final_reported:
+            # Exactly once, right after the final rank update was applied:
+            # let the session verify the recorded plan against the model.
+            self._calibration_final_reported = True
+            self.calibration_observer.on_final_rank_update()
 
         return loss
 
