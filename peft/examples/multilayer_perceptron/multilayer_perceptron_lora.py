@@ -1,0 +1,277 @@
+# ---
+# jupyter:
+#   jupytext:
+#     text_representation:
+#       extension: .py
+#       format_name: percent
+#       format_version: '1.3'
+#       jupytext_version: 1.19.6
+#   kernelspec:
+#     display_name: Python 3 (ipykernel)
+#     language: python
+#     name: python3
+# ---
+
+# %% [markdown]
+# # Using PEFT with custom models
+
+# %% [markdown]
+# `peft` allows us to fine-tune models efficiently with LoRA. In this short notebook, we will demonstrate how to train a simple multilayer perceptron (MLP) using `peft`.
+
+# %% [markdown]
+# ## Imports
+
+# %% [markdown]
+# Make sure that you have the latest version of `peft` installed. To ensure that, run this in your Python environment:
+#     
+#     python -m pip install --upgrade peft
+
+# %%
+import copy
+import os
+
+# ignore bnb warnings
+os.environ["BITSANDBYTES_NOWELCOME"] = "1"
+
+# %%
+import peft
+import torch
+from torch import nn
+import torch.nn.functional as F
+
+# %%
+torch.manual_seed(0)
+
+# %% [markdown]
+# ## Data
+
+# %% [markdown]
+# We will create a toy dataset consisting of random data for a classification task. There is a little bit of signal in the data, so we should expect that the loss of the model can improve during training.
+
+# %%
+X = torch.rand((1000, 20))
+y = (X.sum(1) > 10).long()
+
+# %%
+n_train = 800
+batch_size = 64
+
+# %%
+train_dataloader = torch.utils.data.DataLoader(
+    torch.utils.data.TensorDataset(X[:n_train], y[:n_train]),
+    batch_size=batch_size,
+    shuffle=True,
+)
+eval_dataloader = torch.utils.data.DataLoader(
+    torch.utils.data.TensorDataset(X[n_train:], y[n_train:]),
+    batch_size=batch_size,
+)
+
+
+# %% [markdown]
+# ## Model
+
+# %% [markdown]
+# As a model, we use a simple multilayer perceptron (MLP). For demonstration purposes, we use a very large number of hidden units. This is totally overkill for this task but it helps to demonstrate the advantages of `peft`. In more realistic settings, models will also be quite large on average, so this is not far-fetched.
+
+# %%
+class MLP(nn.Module):
+    def __init__(self, num_units_hidden=2000):
+        super().__init__()
+        self.seq = nn.Sequential(
+            nn.Linear(20, num_units_hidden),
+            nn.ReLU(),
+            nn.Linear(num_units_hidden, num_units_hidden),
+            nn.ReLU(),
+            nn.Linear(num_units_hidden, 2),
+            nn.LogSoftmax(dim=-1),
+        )
+
+    def forward(self, X):
+        return self.seq(X)
+
+
+# %% [markdown]
+# ## Training
+
+# %% [markdown]
+# Here are just a few training hyper-parameters and a simple function that performs the training and evaluation loop.
+
+# %%
+lr = 0.002
+batch_size = 64
+max_epochs = 30
+device = "cpu" if not torch.cuda.is_available() else "cuda"
+
+
+# %%
+def train(model, optimizer, criterion, train_dataloader, eval_dataloader, epochs):
+    for epoch in range(epochs):
+        model.train()
+        train_loss = 0
+        for xb, yb in train_dataloader:
+            xb = xb.to(device)
+            yb = yb.to(device)
+            outputs = model(xb)
+            loss = criterion(outputs, yb)
+            train_loss += loss.detach().float()
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
+
+        model.eval()
+        eval_loss = 0
+        for xb, yb in eval_dataloader:
+            xb = xb.to(device)
+            yb = yb.to(device)
+            with torch.no_grad():
+                outputs = model(xb)
+            loss = criterion(outputs, yb)
+            eval_loss += loss.detach().float()
+
+        eval_loss_total = (eval_loss / len(eval_dataloader)).item()
+        train_loss_total = (train_loss / len(train_dataloader)).item()
+        print(f"{epoch=:<2}  {train_loss_total=:.4f}  {eval_loss_total=:.4f}")
+
+
+# %% [markdown]
+# ### Training without peft
+
+# %% [markdown]
+# Let's start without using `peft` to see what we can expect from the model training.
+
+# %%
+module = MLP().to(device)
+optimizer = torch.optim.Adam(module.parameters(), lr=lr)
+criterion = nn.CrossEntropyLoss()
+
+# %%
+# %time train(module, optimizer, criterion, train_dataloader, eval_dataloader, epochs=max_epochs)
+
+# %% [markdown]
+# Okay, so we got an eval loss of ~0.26, which is much better than random.
+
+# %% [markdown]
+# ### Training with peft
+
+# %% [markdown]
+# Now let's train with `peft`. First we check the names of the modules, so that we can configure `peft` to fine-tune the right modules.
+
+# %%
+[(n, type(m)) for n, m in MLP().named_modules()]
+
+# %% [markdown]
+# Next we can define the LoRA config. There is nothing special going on here. We set the LoRA rank to 8 and select the layers `seq.0` and `seq.2` to be used for LoRA fine-tuning. As for `seq.4`, which is the output layer, we set it as `module_to_save`, which means it is also trained but no LoRA is applied.
+
+# %% [markdown]
+# *Note: Not all layers types can be fine-tuned with LoRA. At the moment, linear layers, embeddings, `Conv2D` and `transformers.pytorch_utils.Conv1D` are supported.
+
+# %%
+config = peft.LoraConfig(
+    r=8,
+    target_modules=["seq.0", "seq.2"],
+    modules_to_save=["seq.4"],
+)
+
+# %% [markdown]
+# Now let's create the `peft` model by passing our initial MLP, as well as the config we just defined, to `get_peft_model`.
+
+# %%
+module = MLP().to(device)
+module_copy = copy.deepcopy(module)  # we keep a copy of the original model for later
+peft_model = peft.get_peft_model(module, config)
+optimizer = torch.optim.Adam(peft_model.parameters(), lr=lr)
+criterion = nn.CrossEntropyLoss()
+peft_model.print_trainable_parameters()
+
+# %% [markdown]
+# Checking the numbers, we see that only ~1% of parameters are actually trained, which is what we like to see.
+#
+# Now let's start the training:
+
+# %%
+# %time train(peft_model, optimizer, criterion, train_dataloader, eval_dataloader, epochs=max_epochs)
+
+# %% [markdown]
+# In the end, we see that the eval loss is very similar to the one we saw earlier when we trained without `peft`. This is quite nice to see, given that we are training a much smaller number of parameters.
+
+# %% [markdown]
+# #### Check which parameters were updated
+
+# %% [markdown]
+# Finally, just to check that LoRA was applied as expected, we check what original weights were updated what weights stayed the same.
+
+# %%
+for name, param in peft_model.base_model.named_parameters():
+    if "lora" not in name:
+        continue
+
+    print(f"New parameter {name:<13} | {param.numel():>5} parameters | updated")
+
+# %%
+params_before = dict(module_copy.named_parameters())
+for name, param in peft_model.base_model.named_parameters():
+    if "lora" in name:
+        continue
+
+    name_before = (
+        name.partition(".")[-1].replace("original_", "").replace("module.", "").replace("modules_to_save.default.", "")
+    )
+    param_before = params_before[name_before]
+    if torch.allclose(param, param_before):
+        print(f"Parameter {name_before:<13} | {param.numel():>7} parameters | not updated")
+    else:
+        print(f"Parameter {name_before:<13} | {param.numel():>7} parameters | updated")
+
+# %% [markdown]
+# So we can see that apart from the new LoRA weights that were added, only the last layer was updated. Since the LoRA weights and the last layer have comparitively few parameters, this gives us a big boost in efficiency.
+
+# %% [markdown]
+# ## Sharing the model through Hugging Face Hub
+
+# %% [markdown]
+# ### Pushing the model to HF Hub
+
+# %% [markdown]
+# With the `peft` model, it is also very easy to push a model the Hugging Face Hub. Below, we demonstrate how it works. It is assumed that you have a valid Hugging Face account and are logged in:
+
+# %%
+user = "BenjaminB"  # put your user name here
+model_name = "peft-lora-with-custom-model"
+model_id = f"{user}/{model_name}"
+
+# %%
+peft_model.push_to_hub(model_id);
+
+# %% [markdown]
+# As we can see, the adapter size is only 211 kB.
+
+# %% [markdown]
+# ### Loading the model from HF Hub
+
+# %% [markdown]
+# Now, it only takes one step to load the model from HF Hub. To do this, we can use `PeftModel.from_pretrained`, passing our base model and the model ID:
+
+# %%
+loaded = peft.PeftModel.from_pretrained(module_copy, model_id)
+type(loaded)
+
+# %% [markdown]
+# Let's check that the two models produce the same output:
+
+# %%
+y_peft = peft_model(X.to(device))
+y_loaded = loaded(X.to(device))
+torch.allclose(y_peft, y_loaded)
+
+# %% [markdown]
+# ### Clean up
+
+# %% [markdown]
+# Finally, as a clean up step, you may want to delete the repo.
+
+# %%
+from huggingface_hub import delete_repo
+
+# %%
+delete_repo(model_id)
