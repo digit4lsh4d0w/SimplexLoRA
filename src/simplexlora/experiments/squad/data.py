@@ -23,6 +23,8 @@ from transformers import (
 )
 from transformers.trainer_utils import PredictionOutput
 
+from simplexlora.calibration.trainer import SimplexCalibrationMixin
+
 from ..arguments import as_metric, as_tokenizer
 
 logger = logging.getLogger(__name__)
@@ -591,7 +593,7 @@ def squad_preprocess(data_args, training_args, model_args):
     )
 
 
-class QuestionAnsweringTrainer(Trainer):
+class QuestionAnsweringTrainer(SimplexCalibrationMixin, Trainer):
     def __init__(
         self,
         *args,

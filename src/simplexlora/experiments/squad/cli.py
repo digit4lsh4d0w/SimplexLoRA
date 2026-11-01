@@ -173,6 +173,7 @@ def main():
         post_process_function=post_processing_function,
         compute_metrics=compute_metrics,
         optimizers=as_trainer_optimizers(optimizer, scheduler),
+        calibration_optimizer=optimizer if training_args.ft_strategy == "SimplexLoRA" else None,
     )
 
     if training_args.do_train:

@@ -95,7 +95,14 @@ def _collect_threshold_warnings(
                 ),
             )
         )
-    if len(snapshots) >= 2 and top_k <= final_metrics.module_count:
+    if (
+        len(snapshots) >= 2
+        and top_k <= final_metrics.module_count
+        and (
+            final_metrics.top_1_share > thresholds.top_share_warning
+            or final_metrics.effective_module_count < thresholds.min_effective_modules
+        )
+    ):
         previous = snapshots[-2].metrics
         if abs(previous.top_k_share - final_metrics.top_k_share) < thresholds.winner_take_all_delta:
             warnings.append(
@@ -152,6 +159,12 @@ def render_calibration_report(
         default_lora_rank=metadata.default_lora_rank,
         top_k=top_k,
     )
+    known_warnings = {(warning.code, warning.message) for warning in warnings}
+    for warning in manifest.warnings:
+        key = (warning.code, warning.message)
+        if key not in known_warnings:
+            warnings.append(warning)
+            known_warnings.add(key)
 
     lines.append("# SimplexLoRA calibration report")
     lines.append("")

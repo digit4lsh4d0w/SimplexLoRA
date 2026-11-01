@@ -192,7 +192,7 @@ class VerifyAppliedPlanTests(unittest.TestCase):
         self.assertFalse(report.ok)
         codes = [issue.code for issue in report.errors]
         self.assertIn("rank_mismatch", codes)
-        self.assertIn("zero_rank_finalized", codes)
+        self.assertIn("zero_rank_weight_nonzero", codes)
 
 
 class LoadLayerPlanTests(unittest.TestCase):
@@ -205,6 +205,7 @@ class LoadLayerPlanTests(unittest.TestCase):
             self.assertEqual(loaded.run_id, plan.run_id)
             self.assertEqual([m.module_name for m in loaded.modules], [m.module_name for m in plan.modules])
             self.assertEqual(loaded.adapter.total_rank, plan.adapter.total_rank)
+            self.assertEqual(loaded.top_k, plan.top_k)
             self.assertTrue(validate_layer_plan(loaded).ok)
 
     def test_unsupported_schema_rejected(self) -> None:
@@ -279,7 +280,11 @@ class FinalizeLayerPlanTests(unittest.TestCase):
             plan = finalize_layer_plan(recorder, registry, top_k=2)
             self.assertEqual(len(plan.modules), 4)  # zero-rank modules stay in the plan
             self.assertEqual(plan.adapter.selected_module_count, 2)
+            self.assertEqual(plan.adapter.projection_step, 2)
             self.assertEqual(len(plan.top_k_modules), 2)
+            for entry in plan.modules:
+                expected_scaling = entry.lora_alpha / entry.rank if entry.rank > 0 else 0.0
+                self.assertEqual(entry.scaling, expected_scaling)
             # idempotent: second call returns the same plan
             self.assertIs(finalize_layer_plan(recorder, registry, top_k=2), plan)
             recorder.close()

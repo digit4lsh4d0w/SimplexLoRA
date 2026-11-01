@@ -204,10 +204,18 @@ class SimplexPeftPluginTests(unittest.TestCase):
             default_lora_rank=2,
         )
 
-        for _ in range(2):
+        initial_a = layer.lora_A["default"].weight
+        initial_b = layer.lora_B["default"].weight
+        for cycle in range(2):
             optimizer.zero_grad(set_to_none=True)
             model(torch.randn(3, 6)).square().sum().backward()
             optimizer.step()
+            if cycle == 0:
+                # Intermediate projections must not replace live A/B modules;
+                # repeated replacements corrupt ROCm allocations in practice.
+                self.assertEqual(layer.r["default"], 2)
+                self.assertIs(layer.lora_A["default"].weight, initial_a)
+                self.assertIs(layer.lora_B["default"].weight, initial_b)
 
         self.assertEqual(layer.r["default"], 2)
         self.assertFalse(cast(torch.Tensor, layer.lora_weight["default"]).requires_grad)

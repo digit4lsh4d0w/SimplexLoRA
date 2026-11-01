@@ -6,10 +6,18 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from tests.calibration_helpers import build_tiny_peft_model, calibration_args, make_plan, tiny_registry
+from tests.calibration_helpers import (
+    build_tiny_peft_model,
+    calibration_args,
+    make_event,
+    make_plan,
+    run_metadata,
+    tiny_registry,
+)
 
 from simplexlora.calibration.cli import (
     add_calibration_arguments,
+    configure_calibration_only,
     deterministic_run_id,
     validate_calibration_arguments,
 )
@@ -186,6 +194,37 @@ class RenderCalibrationReportTests(unittest.TestCase):
             self.assertEqual([m.module_name for m in loaded.top_k_modules], top_modules)
             recorder.close()
 
+    def test_static_uniform_distribution_is_not_called_winner_take_all(self) -> None:
+        with TemporaryDirectory() as tmp:
+            model = build_tiny_peft_model()
+            registry = tiny_registry(model)
+            recorder = CalibrationRecorder(
+                registry=registry,
+                output_dir=Path(tmp),
+                run_metadata=run_metadata(),
+                top_k=3,
+            )
+            recorder.record_projection(make_event(registry, projection_index=1, step=1, weights=[1.0, 1.0, 1.0, 1.0]))
+            recorder.record_projection(
+                make_event(
+                    registry,
+                    projection_index=2,
+                    step=2,
+                    weights=[1.0, 1.0, 1.0, 1.0],
+                    is_final=True,
+                )
+            )
+            plan = finalize_layer_plan(recorder, registry, top_k=3)
+            report = render_calibration_report(
+                manifest=recorder.manifest,
+                snapshots=recorder.snapshots,
+                plan=plan,
+                handoff=None,
+                top_k=3,
+            )
+            self.assertNotIn("winner_take_all", report)
+            recorder.close()
+
 
 class RenderConsoleSummaryTests(unittest.TestCase):
     def test_summary_lists_top_modules_and_paths(self) -> None:
@@ -235,6 +274,17 @@ class CalibrationCliArgumentsTests(unittest.TestCase):
     def test_calibration_only_matching_max_steps_accepted(self) -> None:
         args = self._parser().parse_args(["--calibration-only", "--max-steps", "50"])
         validate_calibration_arguments(args)
+
+    def test_calibration_only_configures_exact_training_steps(self) -> None:
+        args = self._parser().parse_args(["--calibration-only"])
+        args.eval_strategy = "steps"
+        args.save_strategy = "steps"
+        args.load_best_model_at_end = True
+        self.assertEqual(configure_calibration_only(args), 50)
+        self.assertEqual(args.max_steps, 50)
+        self.assertEqual(args.eval_strategy, "no")
+        self.assertEqual(args.save_strategy, "no")
+        self.assertFalse(args.load_best_model_at_end)
 
     def test_calibration_only_requires_artifacts(self) -> None:
         args = self._parser().parse_args(["--calibration-only", "--calibration-no-artifacts"])

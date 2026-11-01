@@ -15,13 +15,8 @@ from simplexlora.calibration.models import (
 from simplexlora.calibration.plan import validate_layer_plan
 
 
-def _anchored_regex(module_name: str) -> str:
-    """Build an unambiguous, escaped PEFT target-module regex."""
-    return "^" + re.escape(module_name)
-
-
 def _suffix_pattern(module_name: str) -> str:
-    """Escaped pattern key for ``rank_pattern``/``alpha_pattern`` (suffix matched)."""
+    """Escaped regex key for ``rank_pattern`` and ``alpha_pattern``."""
     return re.escape(module_name)
 
 
@@ -109,7 +104,11 @@ def build_unsloth_handoff(
         if entry.module_name in included_names:
             applied_rank = max(entry.rank, rank_floor)
             alpha = entry.lora_alpha if alpha_mode == "preserve" else 2 * applied_rank
-            target_modules.append(_anchored_regex(entry.module_name))
+            # A list is interpreted literally (or as a dotted suffix) by PEFT;
+            # escaped regex strings are only supported when target_modules is
+            # a single string. Literal canonical names keep this handoff both
+            # machine-readable and directly consumable by LoraConfig.
+            target_modules.append(entry.module_name)
             rank_pattern[_suffix_pattern(entry.module_name)] = applied_rank
             alpha_pattern[_suffix_pattern(entry.module_name)] = alpha
             applied_rank_total += applied_rank

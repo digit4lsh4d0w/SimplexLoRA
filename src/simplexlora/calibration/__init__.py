@@ -10,6 +10,7 @@ from __future__ import annotations
 from simplexlora.calibration.cli import (
     add_calibration_arguments,
     build_run_metadata,
+    configure_calibration_only,
     deterministic_run_id,
     handoff_options_from_args,
     validate_calibration_arguments,
@@ -64,7 +65,7 @@ from simplexlora.calibration.report import (
     render_console_summary,
     render_stability_report,
 )
-from simplexlora.calibration.trainer import SimplexCalibrationTrainer
+from simplexlora.calibration.trainer import SimplexCalibrationSeq2SeqTrainer, SimplexCalibrationTrainer
 
 __all__ = [
     "SCHEMA_VERSION",
@@ -101,6 +102,7 @@ __all__ = [
     "build_unsloth_handoff",
     "compare_calibration_runs",
     "compute_calibration_metrics",
+    "configure_calibration_only",
     "create_calibration_session",
     "deterministic_run_id",
     "disabled_calibration_session",
@@ -115,4 +117,5 @@ __all__ = [
     "verify_applied_plan",
     "write_calibration_artifacts",
     "SimplexCalibrationTrainer",
+    "SimplexCalibrationSeq2SeqTrainer",
 ]

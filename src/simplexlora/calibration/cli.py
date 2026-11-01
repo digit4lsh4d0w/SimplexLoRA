@@ -144,6 +144,30 @@ def validate_calibration_arguments(args: argparse.Namespace) -> None:
         validate_run_id(str(run_id))
 
 
+def configure_calibration_only(args: Any) -> int | None:
+    """Apply the exact optimizer-step limit used by calibration-only runs."""
+    if not bool(getattr(args, "calibration_only", False)):
+        return None
+
+    fat_step = int(getattr(args, "fat_step", 1))
+    raw_max_fat_steps = getattr(args, "max_fat_steps", None)
+    if raw_max_fat_steps is None:
+        raw_max_fat_steps = getattr(args, "mfs", None)
+    max_fat_steps = int(raw_max_fat_steps) if raw_max_fat_steps is not None else 1
+    required_steps = fat_step * max_fat_steps
+    if required_steps <= 0:
+        raise ValueError(f"calibration-only requires positive fat_step * max_fat_steps, got {required_steps}")
+
+    args.max_steps = required_steps
+    if hasattr(args, "eval_strategy"):
+        args.eval_strategy = "no"
+    if hasattr(args, "save_strategy"):
+        args.save_strategy = "no"
+    if hasattr(args, "load_best_model_at_end"):
+        args.load_best_model_at_end = False
+    return required_steps
+
+
 def _points_into_project_sources(output_dir: Path) -> bool:
     """The output directory must not overlap the project's own sources."""
     try:

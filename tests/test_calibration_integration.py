@@ -12,8 +12,10 @@ from transformers import AutoModelForCausalLM
 
 from simplexlora import optimizers
 from simplexlora.calibration.cli import build_run_metadata
+from simplexlora.calibration.models import RunStatus, StopReason
 from simplexlora.calibration.plan import load_layer_plan, validate_layer_plan, verify_applied_plan
 from simplexlora.calibration.recorder import create_calibration_session
+from simplexlora.calibration.trainer import SimplexCalibrationTrainer
 from simplexlora.peft_plugin import SimplexLoraLinear, get_simplex_peft_model, make_simplex_lora_config
 
 from tests.calibration_helpers import calibration_args
@@ -159,6 +161,8 @@ class FullArtifactPipelineTests(unittest.TestCase):
             ]
             self.assertEqual(projections[-1]["step"], 1 * 2)
             self.assertTrue(projections[-1]["is_final_projection"])
+            assert session.plan is not None
+            self.assertEqual(session.plan.adapter.projection_step, projections[-1]["step"])
 
             steps = [
                 json.loads(line) for line in (output_dir / "steps.jsonl").read_text(encoding="utf-8").splitlines()
@@ -225,8 +229,6 @@ class CalibrationOnlyTrainerTests(unittest.TestCase):
         from datasets import Dataset
         from transformers import TrainingArguments
 
-        from simplexlora.calibration.trainer import SimplexCalibrationTrainer
-
         fat_step, max_fat_steps = 2, 2
         required_steps = fat_step * max_fat_steps
 
@@ -269,12 +271,18 @@ class CalibrationOnlyTrainerTests(unittest.TestCase):
                 trainer.train()
             finally:
                 session.finalize()
-                session.close()
+                session.close(stop_reason=StopReason.CALIBRATION_ONLY)
 
             self.assertEqual(trainer.state.global_step, required_steps)
             assert session.recorder is not None
             self.assertTrue(session.recorder.calibration_completed)
             self.assertEqual(session.recorder.manifest.optimizer_steps, required_steps)
+            self.assertEqual(session.recorder.manifest.status, RunStatus.COMPLETED)
+            assert session.plan is not None
+            self.assertEqual(session.plan.adapter.projection_step, required_steps)
+            for entry in session.plan.modules:
+                expected_scaling = entry.lora_alpha / entry.rank if entry.rank > 0 else 0.0
+                self.assertEqual(entry.scaling, expected_scaling)
 
             steps = [
                 json.loads(line)
@@ -285,6 +293,56 @@ class CalibrationOnlyTrainerTests(unittest.TestCase):
             # Trainer used the exact microbatch loss path: every step has a loss
             for record in steps:
                 self.assertIsNotNone(record["loss"])
+
+    def test_accumulated_step_loss_matches_trainer(self) -> None:
+        from datasets import Dataset
+        from transformers import TrainingArguments
+
+        with TemporaryDirectory() as tmp:
+            model = build_tiny_causal_lm(seed=2)
+            optimizer = build_optimizer(model, fat_step=10, max_fat_steps=1)
+            args = calibration_args(
+                calibration_output_dir=str(Path(tmp) / "calibration"),
+                seed=2,
+                fat_step=10,
+                max_fat_steps=1,
+                calibration_run_id="calib-ga-loss",
+            )
+            metadata = build_run_metadata(model, adapter_name="default", args=args)
+            session = create_calibration_session(model=model, optimizer=optimizer, args=args, run_metadata=metadata)
+
+            sequences = [torch.randint(0, 63, (8,)).tolist() for _ in range(8)]
+            dataset = Dataset.from_dict({"input_ids": sequences, "labels": [row[:] for row in sequences]})
+            training_args = TrainingArguments(
+                output_dir=tmp,
+                per_device_train_batch_size=2,
+                gradient_accumulation_steps=2,
+                max_steps=1,
+                logging_steps=1,
+                eval_strategy="no",
+                save_strategy="no",
+                report_to=[],
+                seed=2,
+                use_cpu=True,
+            )
+            trainer = SimplexCalibrationTrainer(
+                model=model,
+                args=training_args,
+                train_dataset=dataset,
+                processing_class=None,
+                optimizers=(optimizer, None),
+                calibration_optimizer=optimizer,
+            )
+            try:
+                trainer.train()
+            finally:
+                session.close()
+
+            logged = [row["loss"] for row in trainer.state.log_history if "loss" in row][-1]
+            recorded = json.loads(
+                (Path(tmp) / "calibration" / "steps.jsonl").read_text(encoding="utf-8").splitlines()[0]
+            )["loss"]
+            self.assertAlmostEqual(recorded, logged, places=6)
 
     def test_no_artifacts_mode_creates_nothing(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -412,6 +470,7 @@ class LocalQwenRealModelTests(unittest.TestCase):
             expected_modules = len(registry_names(model))
             self.assertEqual(expected_modules % len(self.TARGET_MODULES), 0)
             self.assertEqual(len(plan.modules), expected_modules)
+            module_names = {module.module_name for module in plan.modules}
             self.assertTrue(validate_layer_plan(plan, model=model, adapter_name="default").ok)
             self.assertTrue(verify_applied_plan(model, plan, adapter_name="default").ok)
 
@@ -422,8 +481,9 @@ class LocalQwenRealModelTests(unittest.TestCase):
             # handoff references only positive ranks
             handoff = json.loads((output_dir / "unsloth_handoff.json").read_text(encoding="utf-8"))
             self.assertTrue(handoff["target_modules"])
-            for pattern in handoff["target_modules"]:
-                self.assertTrue(pattern.startswith("^"))
+            for module_name in handoff["target_modules"]:
+                self.assertFalse(module_name.startswith("^"))
+                self.assertIn(module_name, set(module_names))
             self.assertEqual(handoff["requested_rank_total"], plan.adapter.total_rank)
 
 

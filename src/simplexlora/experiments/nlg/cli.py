@@ -5,7 +5,7 @@ import wandb
 import json
 from pathlib import Path
 from typing import cast
-from transformers import get_scheduler, Seq2SeqTrainer
+from transformers import get_scheduler
 
 from .data import nlg_prepocess
 from ..arguments import (
@@ -15,7 +15,11 @@ from ..arguments import (
     uses_wandb,
 )
 from simplexlora import optimizers, utils
-from simplexlora.calibration import attach_calibration_session, disabled_calibration_session
+from simplexlora.calibration import (
+    SimplexCalibrationSeq2SeqTrainer,
+    attach_calibration_session,
+    disabled_calibration_session,
+)
 from simplexlora.peft_plugin import SimplexLoraLinear, get_simplex_peft_model
 import warnings
 
@@ -203,7 +207,7 @@ def main():
         calibration_session = disabled_calibration_session(model, optimizer)
     ############################# Training #####################################
     print("$" * 30, f" {run_name} ", "$" * 30)
-    trainer = Seq2SeqTrainer(
+    trainer = SimplexCalibrationSeq2SeqTrainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset if training_args.do_train else None,
@@ -212,6 +216,7 @@ def main():
         data_collator=data_collator,
         compute_metrics=compute_metrics if training_args.predict_with_generate else None,
         optimizers=as_trainer_optimizers(optimizer, scheduler),
+        calibration_optimizer=optimizer if training_args.ft_strategy == "SimplexLoRA" else None,
     )
 
     if training_args.do_train:

@@ -8,6 +8,7 @@ import unittest
 from typing import Literal, cast
 
 from tests.calibration_helpers import make_plan
+from tests.calibration_helpers import TinyLayeredModel
 
 from simplexlora.calibration.handoff import build_unsloth_handoff
 from simplexlora.calibration.models import CalibrationValidationError, WarningCode
@@ -31,23 +32,16 @@ class BuildUnslothHandoffTests(unittest.TestCase):
         self.assertEqual(handoff.min_weight, 0.0)
         self.assertIsNone(handoff.top_k)
         # rank-0 module must never appear in target_modules
-        self.assertNotIn(
-            "model.layers.1.v_proj",
-            [pattern.strip("^").replace("\\.", ".") for pattern in handoff.target_modules],
-        )
+        self.assertNotIn("model.layers.1.v_proj", handoff.target_modules)
         self.assertEqual(len(handoff.target_modules), 3)
         self.assertEqual(len(handoff.rank_pattern), 3)
         self.assertEqual(len(handoff.alpha_pattern), 3)
 
-    def test_target_modules_are_escaped_and_anchored(self) -> None:
+    def test_target_modules_are_literal_canonical_names(self) -> None:
         plan = make_plan(PLAN_SPECS)
         handoff = build_unsloth_handoff(plan)
         selected_names = [name for name, _ in PLAN_SPECS if name != "model.layers.1.v_proj"]
-        self.assertEqual(len(handoff.target_modules), len(selected_names))
-        for name, pattern in zip(selected_names, handoff.target_modules, strict=True):
-            self.assertTrue(pattern.startswith("^"), pattern)
-            # the pattern must be fully escaped and match its plain module name
-            self.assertIsNotNone(re.fullmatch(pattern, name), (pattern, name))
+        self.assertEqual(list(handoff.target_modules), selected_names)
 
     def test_rank_pattern_keys_are_escaped(self) -> None:
         plan = make_plan(PLAN_SPECS)
@@ -63,10 +57,7 @@ class BuildUnslothHandoffTests(unittest.TestCase):
         plan = make_plan(PLAN_SPECS)
         handoff = build_unsloth_handoff(plan)
         self.assertIn("model.layers.1.v_proj", handoff.excluded_modules)
-        self.assertNotIn(
-            "model.layers.1.v_proj",
-            [pattern.strip("^").replace("\\.", ".") for pattern in handoff.target_modules],
-        )
+        self.assertNotIn("model.layers.1.v_proj", handoff.target_modules)
 
     def test_rank_floor_produces_warning(self) -> None:
         # importance 1/1001 -> rank ceil((1/1001) * 16) = 1, floored to 4
@@ -86,8 +77,24 @@ class BuildUnslothHandoffTests(unittest.TestCase):
         self.assertIn(WarningCode.HANDOFF_TOP_K.value, codes)
         self.assertEqual(len(handoff.target_modules), 2)
         # the two most important modules are kept
-        kept = [pattern.strip("^").replace("\\.", ".") for pattern in handoff.target_modules]
-        self.assertIn("model.layers.0.q_proj", kept)
+        self.assertIn("model.layers.0.q_proj", handoff.target_modules)
+
+    def test_handoff_applies_to_plain_peft_model(self) -> None:
+        from peft import LoraConfig, get_peft_model
+
+        plan = make_plan(PLAN_SPECS)
+        handoff = build_unsloth_handoff(plan)
+        config = LoraConfig(
+            r=16,
+            lora_alpha=32,
+            target_modules=list(handoff.target_modules),
+            rank_pattern=dict(handoff.rank_pattern),
+            alpha_pattern=dict(handoff.alpha_pattern),
+            bias="none",
+        )
+        model = get_peft_model(TinyLayeredModel(), config)
+        trainable = sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad)
+        self.assertEqual(trainable, handoff.estimated_trainable_parameters)
 
     def test_min_weight_excludes_and_warns(self) -> None:
         plan = make_plan(PLAN_SPECS)

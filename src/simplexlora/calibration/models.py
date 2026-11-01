@@ -498,6 +498,7 @@ class LayerPlan:
             "model": self.model.to_dict(),
             "adapter": self.adapter.to_dict(),
             "modules": [entry.to_dict() for entry in self.modules],
+            "top_k": self.top_k,
         }
         document.update(dict(self.extra_fields))
         return document

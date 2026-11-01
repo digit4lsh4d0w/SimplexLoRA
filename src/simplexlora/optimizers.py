@@ -512,8 +512,9 @@ class SimplexAdamW(optim.Optimizer):
         self.max_fat_steps = max_fat_steps
 
         # Calibration observability: optional event sink (see the calibration
-        # package). All hooks are strictly read-only and guarded so that the
-        # optimizer's math is unchanged when no observer is attached.
+        # package). Observer hooks are strictly read-only. Rank application is
+        # deliberately deferred to the final projection regardless of whether
+        # an observer is attached.
         self.calibration_observer: Any | None = calibration_observer
         self.legacy_logging = legacy_logging
         self._calibration_microbatch_losses: list[torch.Tensor] = []
@@ -523,12 +524,11 @@ class SimplexAdamW(optim.Optimizer):
         self._calibration_weight_mirror: list[float] = [1.0] * num_adapters
 
     def add_microbatch_loss(self, loss: torch.Tensor | None) -> None:
-        """Accumulate one micro-batch loss for the next optimizer step.
+        """Accumulate one micro-batch loss contribution for the next step.
 
-        Called by ``SimplexCalibrationTrainer.training_step`` with exactly the
-        loss the Trainer uses for its training loss. The accumulated losses are
-        aggregated (mean over micro-batches) and handed to the calibration
-        observer at the beginning of the next ``step()``, then discarded.
+        Called by ``SimplexCalibrationTrainer.training_step`` with the loss
+        returned by the base Trainer. Those values are already scaled for
+        gradient accumulation, so they must be summed rather than averaged.
         Pure bookkeeping: no parameter, RNG, gradient or scheduler interaction.
         """
         if self.calibration_observer is None or self.max_fat_steps <= 0:
@@ -543,7 +543,7 @@ class SimplexAdamW(optim.Optimizer):
         if not losses:
             return None
         total = torch.stack([loss.reshape(()) for loss in losses]).sum()
-        return (total / len(losses)).item()
+        return total.item()
 
     def _calibration_grad_norm(self, group_name: str) -> float:
         squared: list[torch.Tensor] = []
@@ -576,20 +576,26 @@ class SimplexAdamW(optim.Optimizer):
 
         adapter = self.lora_layers[0]._active_adapter[0] if self.lora_layers else None
         lora_norms = [0.0] * len(self._calibration_weight_mirror)
-        if adapter is not None:
+        if adapter is not None and group is not None:
+            weight_positions = {
+                id(parameter): position for position, parameter in enumerate(cast(list[torch.Tensor], group["params"]))
+            }
             squared: list[torch.Tensor] = []
             lora_occupied: list[int] = []
-            for layer_index, layer in enumerate(self.lora_layers):
+            for layer in self.lora_layers:
                 a_weight = cast(torch.nn.Linear, layer.lora_A[adapter]).weight
                 b_weight = cast(torch.nn.Linear, layer.lora_B[adapter]).weight
                 a_grad = a_weight.grad
                 b_grad = b_weight.grad
                 if a_grad is None and b_grad is None:
                     continue
+                position = weight_positions.get(id(layer.lora_weight[adapter]))
+                if position is None:
+                    continue
                 a_sq = a_grad.detach().pow(2).sum() if a_grad is not None else torch.zeros((), device=a_weight.device)
                 b_sq = b_grad.detach().pow(2).sum() if b_grad is not None else torch.zeros((), device=b_weight.device)
                 squared.append(a_sq + b_sq)
-                lora_occupied.append(layer_index)
+                lora_occupied.append(position)
             if squared:
                 values = torch.stack(squared).sqrt().tolist()
                 for position, value in zip(lora_occupied, values, strict=False):
@@ -601,7 +607,7 @@ class SimplexAdamW(optim.Optimizer):
         *,
         w_vector_old: Any,
         w_vector: torch.Tensor,
-        new_lora_ranks_all: torch.Tensor,
+        new_lora_ranks_all: list[int],
         w_before: list[float],
         weight_group: dict,
     ) -> object:
@@ -622,7 +628,7 @@ class SimplexAdamW(optim.Optimizer):
             before[position] = w_before[j]
             after[position] = w_vector_old[j]
             projected[position] = float(w_vector[j])
-            ranks[position] = int(new_lora_ranks_all[j])
+            ranks[position] = new_lora_ranks_all[j]
         selected = [rank > 0 for rank in ranks]
 
         weight_norms, lora_norms = self._calibration_per_layer_grad_norms()
@@ -732,6 +738,7 @@ class SimplexAdamW(optim.Optimizer):
                 new_lora_weights_nonzero = []
                 new_lora_ranks_nonzero = []
                 new_lora_ranks_all = torch.ceil(w_vector * self.default_lora_rank).int()
+                new_lora_ranks = [int(rank) for rank in new_lora_ranks_all.tolist()]
                 # print(f'new_lora_ranks_all = {new_lora_ranks_all}')
 
                 if self.calibration_observer is not None:
@@ -742,7 +749,7 @@ class SimplexAdamW(optim.Optimizer):
                     event = self._build_projection_event(
                         w_vector_old=w_vector_old,
                         w_vector=w_vector,
-                        new_lora_ranks_all=new_lora_ranks_all,
+                        new_lora_ranks_all=new_lora_ranks,
                         w_before=w_before_step,
                         weight_group=group,
                     )
@@ -760,10 +767,10 @@ class SimplexAdamW(optim.Optimizer):
                     if p.grad is None or i not in self.chosen_layers:
                         continue
 
-                    if new_lora_ranks_all[j] > 0:
+                    if new_lora_ranks[j] > 0:
                         prev_lora_weights_nonzero.append(w_vector_old[j])
                         new_lora_weights_nonzero.append(w_vector[j])
-                        new_lora_ranks_nonzero.append(new_lora_ranks_all[j])
+                        new_lora_ranks_nonzero.append(new_lora_ranks[j])
                         new_chosen_layers.append(i)
 
                     j += 1
@@ -841,28 +848,36 @@ class SimplexAdamW(optim.Optimizer):
 
         self.max_fat_steps -= 1
 
-        for j, layer_idx in enumerate(self.chosen_layers):
-            layer = self.lora_layers[layer_idx]
+        if self.max_fat_steps > 0:
+            # Intermediate projections only update the simplex weights and rank
+            # plan. Repeatedly replacing A/B modules destabilizes the ROCm
+            # allocator and also discards the current adapter without applying
+            # the QR-preserving update promised by the historical method name.
+            return loss
+
+        group = next(group for group in self.param_groups if group["name"] == "loraAB")
+        selected_ranks = {
+            layer_index: int(self.lora_ranks[j].item()) for j, layer_index in enumerate(self.chosen_layers)
+        }
+        for layer_index, layer in enumerate(self.lora_layers):
             adapter_name = layer._active_adapter[0]
-            rank = int(self.lora_ranks[j].item())
+            rank = selected_ranks.get(layer_index)
+            lora_weight = cast(torch.Tensor, layer.lora_weight[adapter_name])
 
-            if self.max_fat_steps == 0:
-                layer._final_lora_rank_update(rank, adapter_name)
+            if rank is None:
+                # Excluded modules must have zero functional contribution and
+                # no trainable parameters after calibration.
+                lora_weight.data.zero_()
+                lora_weight.requires_grad_(False)
+                cast(torch.nn.Linear, layer.lora_A[adapter_name]).weight.requires_grad_(False)
+                cast(torch.nn.Linear, layer.lora_B[adapter_name]).weight.requires_grad_(False)
+                continue
 
-                group = list(filter(lambda group: group["name"] == "loraAB", self.param_groups))[0]
-                lora_a_layer = cast(torch.nn.Linear, layer.lora_A[adapter_name])
-                lora_b_layer = cast(torch.nn.Linear, layer.lora_B[adapter_name])
-                group["params"][2 * layer_idx] = lora_a_layer.weight
-                group["params"][2 * layer_idx + 1] = lora_b_layer.weight
-
-            else:
-                layer._update_lora_rank_QR(rank, adapter_name)
-
-                group = list(filter(lambda group: group["name"] == "loraAB", self.param_groups))[0]
-                lora_a_layer = cast(torch.nn.Linear, layer.lora_A[adapter_name])
-                lora_b_layer = cast(torch.nn.Linear, layer.lora_B[adapter_name])
-                group["params"][2 * layer_idx] = lora_a_layer.weight
-                group["params"][2 * layer_idx + 1] = lora_b_layer.weight
+            layer._final_lora_rank_update(rank, adapter_name)
+            lora_a_layer = cast(torch.nn.Linear, layer.lora_A[adapter_name])
+            lora_b_layer = cast(torch.nn.Linear, layer.lora_B[adapter_name])
+            group["params"][2 * layer_index] = lora_a_layer.weight
+            group["params"][2 * layer_index + 1] = lora_b_layer.weight
 
             lora_A = lora_a_layer.weight
             lora_B = lora_b_layer.weight

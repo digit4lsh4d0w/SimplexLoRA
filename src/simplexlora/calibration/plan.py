@@ -11,6 +11,7 @@ from simplexlora.calibration.models import (
     SUPPORTED_SCHEMA_VERSIONS,
     CalibrationArtifactError,
     CalibrationPlanError,
+    CalibrationRegistryError,
     CalibrationValidationError,
     LayerPlan,
     LayerPlanAdapterInfo,
@@ -107,7 +108,7 @@ def finalize_layer_plan(
         ),
         adapter=LayerPlanAdapterInfo(
             name=registry.adapter_name,
-            projection_step=metadata.fat_step,
+            projection_step=snapshot.step,
             default_lora_rank=metadata.default_lora_rank,
             lora_alpha=metadata.lora_alpha,
             total_rank=sum(entry.rank for entry in entries),
@@ -221,7 +222,39 @@ def validate_layer_plan(
         )
 
     resolved = 0
+    model_module_names: set[str] | None = None
     if model is not None:
+        if adapter_name is not None:
+            from simplexlora.calibration.registry import build_layer_registry
+
+            try:
+                model_registry = build_layer_registry(model, adapter_name)
+            except CalibrationRegistryError as error:
+                errors.append(
+                    ValidationIssue(
+                        code="registry_mismatch",
+                        message=f"could not enumerate model calibration modules: {error}",
+                    )
+                )
+            else:
+                model_module_names = {identity.peft_module_name for identity in model_registry.identities}
+                plan_module_names = {entry.peft_module_name for entry in plan.modules}
+                missing = sorted(model_module_names - plan_module_names)
+                extra = sorted(plan_module_names - model_module_names)
+                if missing:
+                    errors.append(
+                        ValidationIssue(
+                            code="missing_modules",
+                            message=f"plan omits {len(missing)} model module(s), including {missing[:3]}",
+                        )
+                    )
+                if extra:
+                    errors.append(
+                        ValidationIssue(
+                            code="extra_modules",
+                            message=f"plan contains {len(extra)} module(s) absent from the model, including {extra[:3]}",
+                        )
+                    )
         for entry in plan.modules:
             layer = _resolve_layer(model, entry.peft_module_name)
             if layer is None:
@@ -269,6 +302,7 @@ def validate_layer_plan(
         "selected_count": selected_count,
         "total_rank": total_rank,
         "modules_resolved_in_model": resolved,
+        "model_module_count": len(model_module_names) if model_module_names is not None else None,
     }
     report = ValidationReport(
         errors=tuple(errors),
@@ -367,12 +401,30 @@ def verify_applied_plan(
                 )
         else:
             zero_checked += 1
-            # A zero-rank module must not be part of the finalized active set.
-            if not weight.requires_grad:
+            # Excluded adapters are disabled rather than merely omitted from
+            # the rank plan, otherwise their original A/B matrices continue
+            # training and contribute despite rank=0 in the report.
+            if float(weight.detach().reshape(()).item()) != 0.0:
                 errors.append(
                     ValidationIssue(
-                        code="zero_rank_finalized",
-                        message="rank-0 module was finalized (lora_weight frozen), which contradicts the plan",
+                        code="zero_rank_weight_nonzero",
+                        message="rank-0 module has a non-zero lora_weight after finalization",
+                        module_name=entry.module_name,
+                    )
+                )
+            if weight.requires_grad:
+                errors.append(
+                    ValidationIssue(
+                        code="zero_rank_weight_trainable",
+                        message="rank-0 module still has a trainable lora_weight",
+                        module_name=entry.module_name,
+                    )
+                )
+            if layer.lora_A[adapter_name].weight.requires_grad or layer.lora_B[adapter_name].weight.requires_grad:
+                errors.append(
+                    ValidationIssue(
+                        code="zero_rank_adapter_trainable",
+                        message="rank-0 module still has trainable lora_A/lora_B parameters",
                         module_name=entry.module_name,
                     )
                 )
@@ -390,7 +442,7 @@ def verify_applied_plan(
     )
 
 
-_KNOWN_PLAN_KEYS = {"schema_version", "run_id", "model", "adapter", "modules"}
+_KNOWN_PLAN_KEYS = {"schema_version", "run_id", "model", "adapter", "modules", "top_k"}
 
 
 def _parse_model_info(document: dict[str, Any]) -> LayerPlanModelInfo:

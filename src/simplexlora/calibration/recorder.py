@@ -319,7 +319,7 @@ class CalibrationRecorder:
                 rank_delta=ranks[index] - int(previous_ranks[index]),
                 selected=selected_mask[index],
                 lora_alpha=identity.lora_alpha,
-                scaling=identity.scaling,
+                scaling=(identity.lora_alpha / ranks[index] if ranks[index] > 0 else 0.0),
             )
             records.append(record)
             csv_rows.append(record.to_csv_row())
@@ -388,7 +388,10 @@ class CalibrationRecorder:
             )
         if len(self.snapshots) >= 2:
             previous = self.snapshots[-2]
-            if abs(previous.metrics.top_k_share - metrics.top_k_share) < thresholds.winner_take_all_delta:
+            if (
+                metrics.top_1_share > thresholds.top_share_warning
+                or metrics.effective_module_count < thresholds.min_effective_modules
+            ) and abs(previous.metrics.top_k_share - metrics.top_k_share) < thresholds.winner_take_all_delta:
                 self.add_warning(
                     WarningCode.WINNER_TAKE_ALL,
                     f"top-k share barely changed between projections "
@@ -526,7 +529,11 @@ class CalibrationRecorder:
                 )
                 stop_reason = StopReason.TRAINING_COMPLETE
         else:
-            status = self.manifest.status
+            status = (
+                RunStatus.COMPLETED
+                if self.calibration_completed
+                else (RunStatus.PARTIAL if self.snapshots else RunStatus.FAILED)
+            )
 
         self.manifest.status = status
         self.manifest.stop_reason = stop_reason or StopReason.NOT_STOPPED
@@ -932,9 +939,14 @@ def attach_calibration_session(
     observer to the optimizer. Returns a disabled no-op session when artifacts
     are switched off.
     """
-    from simplexlora.calibration.cli import build_run_metadata, validate_calibration_arguments
+    from simplexlora.calibration.cli import (
+        build_run_metadata,
+        configure_calibration_only,
+        validate_calibration_arguments,
+    )
 
     validate_calibration_arguments(training_args)
+    configure_calibration_only(training_args)
     training_args.model_id = model_id
     metadata = build_run_metadata(
         model,
