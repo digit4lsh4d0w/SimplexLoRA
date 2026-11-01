@@ -1,51 +1,83 @@
-## Requirements 
-    python 3.11.7
+## Requirements
 
-## Dependencies installation
-Please follow these steps (required!):
+- [uv](https://docs.astral.sh/uv/) 0.13.6 or newer.
+- Python 3.15 or newer. The local development version is stored in
+  `.python-version` as `3.15`, so uv selects the latest 3.15 patch release
+  automatically.
+- Linux and a driver compatible with the selected CUDA or ROCm PyTorch build.
 
-0. Install python3.11.7
-    - Install conda
-    - Run:
-      ```bash
-      conda create --name python3.11.7 python=3.11.7
-      conda activate python3.11.7
-      ```
+`requires-python` describes the compatibility range of the project, while
+`.python-version` selects the interpreter used for local development.
 
-1. Create virtual env
+## Dependencies
+
+All dependency management and command execution go through uv. Select one GPU
+profile when creating the environment:
+
 ```bash
-python -m venv venv
-source venv/bin/activate
+uv sync --extra rocm
+# or
+uv sync --extra cuda
 ```
 
-2. Update pip
+The `cuda` and `rocm` profiles are mutually exclusive. A plain `uv sync`
+installs only the backend-independent dependencies. The ROCm profile is tuned
+for the RX 9070 XT (`gfx1201`); use another `device-gfx*` extra and matching
+override when targeting a different AMD GPU.
+
+`uv sync --extra cuda` installs the CUDA PyTorch wheel from
+`download.pytorch.org`, while its NVIDIA runtime dependencies come from the
+standard PyPI package index. `uv sync --extra rocm` installs PyTorch and the
+required ROCm SDK packages from the official ROCm 7.14 index.
+
+The local [`peft`](./peft) package is installed in editable mode because it
+contains the SimplexLoRA modifications.
+
+Use `uv sync --no-dev` for a runtime-only environment. Do not install packages
+with conda or pip.
+
+## Checks
+
 ```bash
-pip install pip==24.1.1
+uv run ruff check .
 ```
 
-3. Install rest of packages from requirements.txt
+## Notebooks
+
+The notebooks are converted to Python with the locked `nbconvert` version:
+
 ```bash
-pip install -r requirements.txt
+uv run jupyter-nbconvert --to script path/to/notebook.ipynb --output notebook
 ```
 
-4. Install local version of peft
-```bash
-pip install ./peft
-```
-
-#
-
-For the further runs use:
-```bash
-conda activate python3.11.7
-source venv/bin/activate
-```
+The visualization notebook has already been exported to
+`additional_experiments/visualization.py`.
 
 ## Run experiments
-To run our experiments, use run_glue_experiments.sh
 
-```
-./run_glue_experiments.sh
+Run scripts and Python modules through uv:
+
+```bash
+uv run bash run_glue_experiments.sh
+uv run python additional_experiments/visualization.py
 ```
 
 To conduct your own experiments, check [glue_experiment/scripts/](./glue_experiment/scripts/)
+
+## Decompilation training
+
+The first SimplexLoRA decompilation run uses a deterministic 20,000-example
+subset of `LLM4Binary/decompile-bench`:
+
+```bash
+HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 \
+HIP_VISIBLE_DEVICES=0 ROCR_VISIBLE_DEVICES=0 \
+uv run --extra rocm python run_experiment/train_decompile.py \
+  --offline \
+  --max-train-samples 20000 \
+  --max-seq-length 1024 \
+  --num-train-epochs 3
+```
+
+This writes the PEFT adapter, tokenizer files and memory metrics to
+`outputs/qwen2.5-coder-decompile-simplex`.
