@@ -1,7 +1,7 @@
 clear
 for task_name in mrpc
 do
-    CUDA_VISIBLE_DEVICES=6 uv run python ./glue_experiment/run_glue.py \
+    CUDA_VISIBLE_DEVICES=6 uv run simplexlora-glue \
         --dataset_name glue \
         --task_name $task_name \
         --model_name_or_path microsoft/deberta-v3-base \

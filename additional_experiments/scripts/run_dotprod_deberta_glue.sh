@@ -1,6 +1,6 @@
 for ((k=0;k<=35;k++));
 do
-    CUDA_VISIBLE_DEVICES=1 uv run python ./additional_experiments/run_dotprod.py \
+    CUDA_VISIBLE_DEVICES=1 uv run simplexlora-dotprod \
         --dataset_name glue \
         --task_name mnli \
         --model_name_or_path microsoft/deberta-v3-base \

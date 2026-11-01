@@ -16,7 +16,7 @@ do
             do
                 for seed in 18 57 100
                 do
-                    CUDA_VISIBLE_DEVICES=2 uv run python ./nlg_experiment/run_nlg.py \
+                    CUDA_VISIBLE_DEVICES=2 uv run simplexlora-nlg \
                         --dataset_name $dataset \
                         $extra_ds_args \
                         --model_name_or_path facebook/bart-large \

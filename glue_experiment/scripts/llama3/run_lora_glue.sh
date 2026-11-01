@@ -15,7 +15,7 @@ do
     do
         export CUDA_VISIBLE_DEVICES=1
         export HF_TOKEN=kek
-        uv run python ./glue_experiment/run_glue.py \
+        uv run simplexlora-glue \
             --dataset_name glue \
             --task_name $task_name \
             --model_name_or_path meta-llama/Meta-Llama-3.1-8B \

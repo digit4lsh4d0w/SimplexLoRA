@@ -30,8 +30,10 @@ override when targeting a different AMD GPU.
 standard PyPI package index. `uv sync --extra rocm` installs PyTorch and the
 required ROCm SDK packages from the official ROCm 7.14 index.
 
-The local [`peft`](./peft) package is installed in editable mode because it
-contains the SimplexLoRA modifications.
+The root project and local [`peft`](./peft) package form a uv workspace with a
+single [`uv.lock`](./uv.lock). Workspace packages are installed in editable mode;
+`peft` contains the SimplexLoRA modifications and uses the same Python and
+dependency resolution as the root project.
 
 Use `uv sync --no-dev` for a runtime-only environment. Do not install packages
 with conda or pip.
@@ -40,14 +42,29 @@ with conda or pip.
 
 ```bash
 uv run ruff check .
+uv build --all-packages
 ```
+
+## Project layout
+
+The installable package uses the uv `src` layout:
+
+```text
+src/simplexlora/             core configuration, optimizers and utilities
+src/simplexlora/experiments/ runnable experiment modules and CLI entry points
+src/simplexlora/tools/       maintenance utilities
+peft/                        local workspace member with SimplexLoRA PEFT changes
+```
+
+Python entry points are defined in `pyproject.toml`, so experiment code does
+not rely on `sys.path` changes or sibling-file imports.
 
 ## Notebook sources
 
 Notebook sources are stored as Jupytext `py:percent` scripts. The `.py` files
-are the canonical, version-controlled form; `.ipynb` files are ignored. Keep
-markdown sections in `# %% [markdown]` cells so that the method notes and
-experiment context remain part of the source.
+are the canonical, version-controlled form and generated `.ipynb` files should
+not be committed. Keep markdown sections in `# %% [markdown]` cells so that the
+method notes and experiment context remain part of the source.
 
 To inspect or run a source as a temporary notebook, convert it outside the
 repository:
@@ -65,14 +82,20 @@ uv run jupytext --to py:percent path/to/external.ipynb
 
 ## Run experiments
 
-Run scripts and Python modules through uv:
+Run experiments through their uv-managed entry points:
 
 ```bash
-uv run bash run_glue_experiments.sh
+uv run simplexlora-glue --help
+uv run simplexlora-nlg --help
+uv run simplexlora-squad --help
+uv run simplexlora-llm --help
+uv run simplexlora-dotprod --help
+uv run simplexlora-memory --help
 uv run python additional_experiments/visualization.py
 ```
 
-To conduct your own experiments, check [glue_experiment/scripts/](./glue_experiment/scripts/)
+Experiment launch examples remain in the corresponding `*/scripts/`
+directories.
 
 ## Decompilation training
 
@@ -82,7 +105,7 @@ subset of `LLM4Binary/decompile-bench`:
 ```bash
 HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 \
 HIP_VISIBLE_DEVICES=0 ROCR_VISIBLE_DEVICES=0 \
-uv run --extra rocm python run_experiment/train_decompile.py \
+uv run --extra rocm simplexlora-decompile \
   --offline \
   --max-train-samples 20000 \
   --max-seq-length 1024 \

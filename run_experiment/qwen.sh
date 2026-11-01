@@ -21,7 +21,7 @@ do
 
     for seed in 10 57 108
     do
-            uv run python ./run_experiment/run_experiment.py \
+            uv run simplexlora-llm \
                 --dataset $dataset \
                 --seed $seed \
                 --model Qwen/Qwen3-8B \

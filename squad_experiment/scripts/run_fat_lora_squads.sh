@@ -8,7 +8,7 @@ do
     do
         for seed in 52
         do
-            CUDA_VISIBLE_DEVICES=7 uv run python ./squad_experiment/run_squad.py \
+            CUDA_VISIBLE_DEVICES=7 uv run simplexlora-squad \
                 --dataset_name squad_v2 \
                 --model_name_or_path microsoft/deberta-v3-base \
                 --per_device_train_batch_size 32 \
