@@ -1,19 +1,18 @@
 import torch
 import gc
 import os
-import sys
 import wandb
 import peft
 import json
+from pathlib import Path
 from transformers import (
     HfArgumentParser,
     get_scheduler,
     Seq2SeqTrainer
 )
 
-from utils_nlg import nlg_prepocess
-sys.path.append(os.getcwd())
-from src import (
+from .data import nlg_prepocess
+from simplexlora import (
     config,
     optimizers,
     utils
@@ -56,7 +55,7 @@ def main():
     ######################### Optimizer and Scheduler ##########################
     optimizer, scheduler = None, None
     if "tuned" in [training_args.learning_rate]: # [TODO] add more tuned params
-        f_name = "./nlg_experiment/tuned_params.json"
+        f_name = Path(__file__).with_name("tuned_params.json")
         with open(f_name) as f:
             tuned_params = json.load(f)
         lr = tuned_params[model_args.model_name_or_path][data_args.dataset_name][training_args.ft_strategy]["lr"]

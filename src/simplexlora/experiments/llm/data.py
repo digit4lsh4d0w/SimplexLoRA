@@ -1,11 +1,8 @@
 import json
-import sys
-import os
 from functools import partial
 from torch.utils.data import Dataset
 
-sys.path.append(os.getcwd())
-from src.utils import shuffleDict
+from simplexlora.utils import shuffleDict
 
 from datasets import load_dataset
 

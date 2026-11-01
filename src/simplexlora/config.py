@@ -4,7 +4,7 @@ from transformers import Seq2SeqTrainingArguments
 from transformers.utils import check_min_version
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
-check_min_version("4.4.0")
+check_min_version("5.22.1")
 
 task_to_keys_glue = {
     "cola": ("sentence", None),
@@ -392,11 +392,11 @@ class TrainingArguments(Seq2SeqTrainingArguments):
     )
     train_proportion: Optional[float] = field(
         default=None,
-        metadata={"help": "all_params / trainable_params * 100%. For wandb"}
+        metadata={"help": "all_params / trainable_params * 100%%. For wandb"}
     )
     peft_proportion: Optional[float] = field(
         default=None,
-        metadata={"help": "all_params / (all_params ater PEFT - all_params before PEFT) * 100%. For wandb"}
+        metadata={"help": "all_params / (all_params after PEFT - all_params before PEFT) * 100%%. For wandb"}
     )
     peft_params: Optional[float] = field(
         default=None,

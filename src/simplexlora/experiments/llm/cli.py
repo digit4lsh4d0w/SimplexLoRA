@@ -1,14 +1,11 @@
 import torch
-import sys
-import os
 
-from config import parse_args
+from simplexlora.utils import get_run_name
+from .config import parse_args
+from . import trainer
 
-sys.path.append(os.getcwd())
-from src.utils import get_run_name
-import main_llm
 
-if __name__ == "__main__":
+def main() -> None:
     if torch.cuda.is_available():
         print("~~~~~~~~~~~~~~~ GPU ~~~~~~~~~~~~~~~")
         for i in range(torch.cuda.device_count()):
@@ -17,5 +14,9 @@ if __name__ == "__main__":
         print("~~~~~~~~~~~~~~~ USING CPU ~~~~~~~~~~~~~~~")
     args, parser = parse_args()
     args.run_name = get_run_name(args, parser)
-    if args.dataset.lower() in main_llm.DATASETS:
-        main_llm.main(args)
+    if args.dataset.lower() in trainer.DATASETS:
+        trainer.main(args)
+
+
+if __name__ == "__main__":
+    main()

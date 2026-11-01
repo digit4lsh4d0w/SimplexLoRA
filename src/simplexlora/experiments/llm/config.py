@@ -3,8 +3,8 @@ from termcolor import colored
 import os
 import json
 
-from config_ft import set_arguments_ft, print_warnings_ft
-from main_llm import DATASETS as LLM_DATASETS
+from .arguments import print_warnings_ft, set_arguments_ft
+from .trainer import DATASETS as LLM_DATASETS
 
 
 def parse_args():

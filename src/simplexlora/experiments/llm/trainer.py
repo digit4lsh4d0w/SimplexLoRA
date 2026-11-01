@@ -1,6 +1,4 @@
 import torch
-import os
-import sys
 import wandb
 import peft
 import datasets
@@ -16,13 +14,12 @@ from transformers import (
     pipeline,
 )
 
-sys.path.append(os.getcwd())
-from src import (
+from simplexlora import (
     optimizers,
     utils
 )
 
-from utils_llm import DatasetRegistry
+from .data import DatasetRegistry
 
 import warnings
 warnings.filterwarnings("ignore")

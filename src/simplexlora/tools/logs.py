@@ -1,3 +1,9 @@
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+
+
 def filter_log_file(input_file, output_file):
     """
     Фильтрует строки из файла, удаляя те, которые начинаются с указанных префиксов.
@@ -39,9 +45,13 @@ def filter_log_file(input_file, output_file):
     except Exception as e:
         print(f"Произошла ошибка: {e}")
 
-# Пример использования
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Filter SimplexLoRA training logs")
+    parser.add_argument("input_file", type=Path)
+    parser.add_argument("output_file", type=Path)
+    args = parser.parse_args()
+    filter_log_file(args.input_file, args.output_file)
+
+
 if __name__ == "__main__":
-    input_filename = "paper_exp_20092025.txt"  # Замените на путь к вашему файлу
-    output_filename = "paper_exp_20092025_parsed.txt"  # Замените на желаемое имя выходного файла
-    
-    filter_log_file(input_filename, output_filename)
+    main()

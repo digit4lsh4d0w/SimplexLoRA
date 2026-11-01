@@ -1,17 +1,16 @@
 import torch
 import gc
 import os
-import sys
 import wandb
 import peft
 import json
+from pathlib import Path
 from transformers import (
     HfArgumentParser,
 )
 
-from utils_squad import squad_preprocess, QuestionAnsweringTrainer
-sys.path.append(os.getcwd())
-from src import (
+from .data import QuestionAnsweringTrainer, squad_preprocess
+from simplexlora import (
     config,
     optimizers,
     utils
@@ -59,7 +58,7 @@ def main():
     ######################### Optimizer and Scheduler ##########################
     optimizer, scheduler = None, None
     if "tuned" in [training_args.learning_rate]: # [TODO] add more tuned params
-        f_name = "./squad_experiment/tuned_params.json"
+        f_name = Path(__file__).with_name("tuned_params.json")
         with open(f_name) as f:
             tuned_params = json.load(f)
         

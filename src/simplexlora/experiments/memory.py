@@ -1,17 +1,14 @@
 import torch
 import gc
-import os
-import sys
 from transformers import (
     Trainer,
     HfArgumentParser,
     get_scheduler,
 )
 
-sys.path.append(os.getcwd())
-from glue_experiment.utils_glue import glue_preprocess
-from src import config
-from src.utils import AdapterLayer
+from simplexlora import config
+from simplexlora.experiments.glue.data import glue_preprocess
+from simplexlora.utils import AdapterLayer
 
 def main():
     for i in range(torch.cuda.device_count()):
