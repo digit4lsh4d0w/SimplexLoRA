@@ -162,18 +162,49 @@ class SimplexPeftPluginTests(unittest.TestCase):
         model, _, _ = build_model()
         layer = cast(SimplexLoraLinear, model.base_model.model.proj)
         original_weight = cast(torch.Tensor, layer.lora_weight["default"])
+        original_a = linear_weight(layer.lora_A["default"])
+        original_b = linear_weight(layer.lora_B["default"])
+
+        layer._update_lora_rank_QR(2, "default")
+        self.assertIs(linear_weight(layer.lora_A["default"]), original_a)
+        self.assertIs(linear_weight(layer.lora_B["default"]), original_b)
 
         layer._update_lora_rank_QR(3, "default")
         self.assertIs(layer.lora_weight["default"], original_weight)
         self.assertEqual(layer.r["default"], 3)
         self.assertEqual(layer.lora_A["default"].out_features, 3)
         self.assertEqual(layer.lora_B["default"].in_features, 3)
+        self.assertIsNot(linear_weight(layer.lora_A["default"]), original_a)
+        self.assertIsNot(linear_weight(layer.lora_B["default"]), original_b)
         self.assertTrue(cast(torch.Tensor, layer.lora_weight["default"]).requires_grad)
         self.assertTrue(math.isclose(layer.scaling["default"], 4 / 3))
 
         layer._final_lora_rank_update(1, "default")
         self.assertEqual(layer.r["default"], 1)
         self.assertEqual(cast(torch.Tensor, layer.lora_weight["default"]).item(), 1)
+        self.assertFalse(cast(torch.Tensor, layer.lora_weight["default"]).requires_grad)
+
+    def test_zero_rank_update_disables_adapter_without_removing_plugins(self) -> None:
+        model, _, _ = build_model()
+        layer = cast(SimplexLoraLinear, model.base_model.model.proj)
+        inputs = torch.randn(5, 6)
+
+        with torch.no_grad():
+            linear_weight(layer.lora_A["default"]).normal_()
+            linear_weight(layer.lora_B["default"]).normal_()
+
+        layer._update_lora_rank_QR(0, "default")
+
+        self.assertEqual(layer.r["default"], 0)
+        self.assertEqual(layer.scaling["default"], 0.0)
+        self.assertEqual(cast(torch.Tensor, layer.lora_weight["default"]).item(), 0.0)
+        self.assertFalse(cast(torch.Tensor, layer.lora_weight["default"]).requires_grad)
+        self.assertFalse(linear_weight(layer.lora_A["default"]).requires_grad)
+        self.assertFalse(linear_weight(layer.lora_B["default"]).requires_grad)
+        torch.testing.assert_close(model(inputs), torch.tanh(layer.get_base_layer()(inputs)))
+
+        layer._final_lora_rank_update(0, "default")
+        self.assertEqual(cast(torch.Tensor, layer.lora_weight["default"]).item(), 0.0)
         self.assertFalse(cast(torch.Tensor, layer.lora_weight["default"]).requires_grad)
 
     def test_simplex_optimizer_survives_multiple_rank_updates(self) -> None:
@@ -201,7 +232,7 @@ class SimplexPeftPluginTests(unittest.TestCase):
             num_adapters=1,
             fat_step=1,
             max_fat_steps=2,
-            default_lora_rank=2,
+            default_lora_rank=3,
         )
 
         initial_a = layer.lora_A["default"].weight
@@ -211,13 +242,16 @@ class SimplexPeftPluginTests(unittest.TestCase):
             model(torch.randn(3, 6)).square().sum().backward()
             optimizer.step()
             if cycle == 0:
-                # Intermediate projections must not replace live A/B modules;
-                # repeated replacements corrupt ROCm allocations in practice.
-                self.assertEqual(layer.r["default"], 2)
-                self.assertIs(layer.lora_A["default"].weight, initial_a)
-                self.assertIs(layer.lora_B["default"].weight, initial_b)
+                self.assertEqual(layer.r["default"], 3)
+                self.assertIsNot(layer.lora_A["default"].weight, initial_a)
+                self.assertIsNot(layer.lora_B["default"].weight, initial_b)
+                self.assertIs(optimizer.param_groups[0]["params"][0], layer.lora_A["default"].weight)
+                self.assertIs(optimizer.param_groups[0]["params"][1], layer.lora_B["default"].weight)
+                self.assertTrue(layer.lora_A["default"].weight.requires_grad)
+                self.assertTrue(layer.lora_B["default"].weight.requires_grad)
 
-        self.assertEqual(layer.r["default"], 2)
+        self.assertEqual(layer.r["default"], 3)
+        self.assertEqual(cast(torch.Tensor, layer.lora_weight["default"]).item(), 1.0)
         self.assertFalse(cast(torch.Tensor, layer.lora_weight["default"]).requires_grad)
 
 

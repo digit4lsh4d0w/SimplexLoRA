@@ -131,9 +131,14 @@ class VerifyAppliedPlanTests(unittest.TestCase):
             num_adapters=len(weight_params),
             fat_step=1,
             max_fat_steps=2,
-            default_lora_rank=4,
+            # Force the intermediate projection to resize adapters before the
+            # final projection and verification pass.
+            default_lora_rank=5,
         )
-        args = calibration_args(calibration_output_dir=str(output_dir) if output_dir else None)
+        args = calibration_args(
+            calibration_output_dir=str(output_dir) if output_dir else None,
+            lora_r=5,
+        )
         metadata = build_run_metadata(model, adapter_name="default", args=args)
         session = create_calibration_session(model=model, optimizer=optimizer, args=args, run_metadata=metadata)
         torch.manual_seed(5)

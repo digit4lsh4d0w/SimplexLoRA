@@ -132,11 +132,34 @@ class SimplexLoraLinear(Linear):
         return {(): None}
 
     def _update_lora_rank_QR(self, new_rank: int, adapter_name: str) -> None:
-        """Reinitialize an adapter at a new intermediate rank.
+        """Resize an adapter at an intermediate Simplex projection.
 
-        The historical method name is retained because ``SimplexAdamW`` calls it.
-        The original implementation did not actually apply QR.
+        The historical method name is retained because ``SimplexAdamW`` calls
+        it. The latest vendored implementation reinitialized the adapter at a
+        new rank instead of applying QR, so this method preserves that contract.
+        Calling it with the current rank is intentionally a no-op to avoid
+        discarding learned A/B matrices on every projection.
         """
+        if new_rank < 0:
+            raise ValueError(f"new_rank must be non-negative, got {new_rank}")
+
+        current_rank = int(self.r[adapter_name])
+        if new_rank == current_rank:
+            return
+
+        lora_weight = cast(torch.Tensor, self.lora_weight[adapter_name])
+        lora_a = cast(nn.Linear, self.lora_A[adapter_name]).weight
+        lora_b = cast(nn.Linear, self.lora_B[adapter_name]).weight
+
+        if new_rank == 0:
+            lora_weight.data.zero_()
+            lora_weight.requires_grad_(False)
+            lora_a.requires_grad_(False)
+            lora_b.requires_grad_(False)
+            self.r[adapter_name] = 0
+            self.scaling[adapter_name] = 0.0
+            return
+
         config = self._simplex_lora_configs[adapter_name]
         self.update_layer(
             adapter_name,
@@ -144,18 +167,13 @@ class SimplexLoraLinear(Linear):
             self.lora_alpha[adapter_name],
             config=config,
         )
+        lora_weight.requires_grad_(True)
 
     def _final_lora_rank_update(self, new_rank: int, adapter_name: str) -> None:
         """Set the final rank and fix the learned layer weight at one."""
-        config = self._simplex_lora_configs[adapter_name]
-        self.update_layer(
-            adapter_name,
-            new_rank,
-            self.lora_alpha[adapter_name],
-            config=config,
-        )
+        self._update_lora_rank_QR(new_rank, adapter_name)
         final_weight = cast(torch.Tensor, self.lora_weight[adapter_name])
-        final_weight.data.fill_(1)
+        final_weight.data.fill_(1 if new_rank > 0 else 0)
         final_weight.requires_grad_(False)
 
 

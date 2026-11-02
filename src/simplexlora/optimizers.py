@@ -848,32 +848,24 @@ class SimplexAdamW(optim.Optimizer):
 
         self.max_fat_steps -= 1
 
-        if self.max_fat_steps > 0:
-            # Intermediate projections only update the simplex weights and rank
-            # plan. Repeatedly replacing A/B modules destabilizes the ROCm
-            # allocator and also discards the current adapter without applying
-            # the QR-preserving update promised by the historical method name.
-            return loss
-
         group = next(group for group in self.param_groups if group["name"] == "loraAB")
         selected_ranks = {
             layer_index: int(self.lora_ranks[j].item()) for j, layer_index in enumerate(self.chosen_layers)
         }
+        is_final = self.max_fat_steps == 0
         for layer_index, layer in enumerate(self.lora_layers):
             adapter_name = layer._active_adapter[0]
             rank = selected_ranks.get(layer_index)
-            lora_weight = cast(torch.Tensor, layer.lora_weight[adapter_name])
+            old_lora_a = cast(torch.nn.Linear, layer.lora_A[adapter_name]).weight
+            old_lora_b = cast(torch.nn.Linear, layer.lora_B[adapter_name]).weight
 
             if rank is None:
-                # Excluded modules must have zero functional contribution and
-                # no trainable parameters after calibration.
-                lora_weight.data.zero_()
-                lora_weight.requires_grad_(False)
-                cast(torch.nn.Linear, layer.lora_A[adapter_name]).weight.requires_grad_(False)
-                cast(torch.nn.Linear, layer.lora_B[adapter_name]).weight.requires_grad_(False)
-                continue
+                rank = 0
+            if is_final:
+                layer._final_lora_rank_update(rank, adapter_name)
+            else:
+                layer._update_lora_rank_QR(rank, adapter_name)
 
-            layer._final_lora_rank_update(rank, adapter_name)
             lora_a_layer = cast(torch.nn.Linear, layer.lora_A[adapter_name])
             lora_b_layer = cast(torch.nn.Linear, layer.lora_B[adapter_name])
             group["params"][2 * layer_index] = lora_a_layer.weight
@@ -881,6 +873,11 @@ class SimplexAdamW(optim.Optimizer):
 
             lora_A = lora_a_layer.weight
             lora_B = lora_b_layer.weight
+            if lora_A is old_lora_a and lora_B is old_lora_b:
+                continue
+
+            self.state.pop(old_lora_a, None)
+            self.state.pop(old_lora_b, None)
 
             self.state[lora_A]["step"] = 0
             self.state[lora_A]["exp_avg"] = torch.zeros_like(lora_A)
@@ -890,7 +887,7 @@ class SimplexAdamW(optim.Optimizer):
             self.state[lora_B]["exp_avg"] = torch.zeros_like(lora_B)
             self.state[lora_B]["exp_avg_sq"] = torch.zeros_like(lora_B)
 
-        if self.calibration_observer is not None and self.max_fat_steps == 0 and not self._calibration_final_reported:
+        if self.calibration_observer is not None and is_final and not self._calibration_final_reported:
             # Exactly once, right after the final rank update was applied:
             # let the session verify the recorded plan against the model.
             self._calibration_final_reported = True
