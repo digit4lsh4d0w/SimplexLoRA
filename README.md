@@ -310,3 +310,26 @@ The command writes the normal calibration artifacts plus
 layer importance and lora-weight gradient norms with the measured held-out
 `delta_loss`. Held-out examples are never used for the calibration optimizer
 steps.
+
+### WLoRA-derived hyperparameter screen
+
+`decompile-hparam` adapts the six task-specific profiles from the
+[Andron00e/WLoRA](https://github.com/Andron00e/WLoRA) README to an O0
+Decompile-Bench screen. Those profiles were measured on different tasks and
+models, so they are starting points rather than guaranteed Simplex settings.
+
+The screen uses `r=8`, `alpha=32`, cosine decay and warmup 10. It keeps the
+adapter-level weight-gradient scale comparable to the current configuration by
+setting `weight_lr=3.125e-4`. Each profile performs one final projection after
+its requested optimizer-step count; this avoids irreversible intermediate
+pruning while the learning rate and effective batch are compared.
+
+```bash
+uv run --extra cuda simplexlora-grid decompile-hparam --dry-run
+uv run --extra cuda simplexlora-grid decompile-hparam --select wlora-qnli-like
+uv run --extra cuda simplexlora-grid decompile-hparam --keep-going
+```
+
+After selecting a candidate, rerun it with the production
+`fat_step=10, max_fat_steps=5` schedule. Do not treat one final projection as
+evidence that the iterative rank allocator is stable.

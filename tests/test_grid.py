@@ -55,6 +55,7 @@ class GridTests(unittest.TestCase):
 
     def test_builtin_configs_expand(self) -> None:
         expected_counts = {
+            "decompile-hparam.toml": 6,
             "glue-deberta.toml": 20,
             "nlg.toml": 357,
             "squad.toml": 16,

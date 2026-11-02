@@ -1,0 +1,95 @@
+# WLoRA README-style training profiles adapted to an O0 SimplexLoRA screen.
+#
+# Every run performs one final projection after its configured max_steps. This
+# avoids irreversible intermediate pruning while comparing learning rates,
+# effective batches, and training durations. It is a screening configuration,
+# not the production 10 x 5 Simplex schedule.
+
+[settings]
+manifest = "/tmp/simplexlora-decompile-hparam-grid.json"
+stop_on_error = false
+
+[settings.defaults]
+env = { CUDA_VISIBLE_DEVICES = "0", HF_HUB_OFFLINE = "1", HF_DATASETS_OFFLINE = "1", TRANSFORMERS_OFFLINE = "1", PYTHONUNBUFFERED = "1" }
+
+[settings.defaults.arguments]
+offline = true
+model_id = "Qwen/Qwen2.5-Coder-0.5B-Instruct"
+optimization_level = "O0"
+optimization_min_confidence = 0.98
+max_train_samples = 10000
+max_validation_samples = 256
+max_seq_length = 1024
+warmup_steps = 10
+weight_lr = 3.125e-4
+weight_decay = 0.01
+lora_r = 8
+lora_alpha = 32
+lora_dropout = 0.05
+batch_size = 1
+max_fat_steps = 1
+logging_steps = 1
+ablation_max_samples = 64
+ablation_batch_size = 1
+ablation_top_k = 5
+seed = 42
+
+[[experiment]]
+name = "wlora-mnli-like"
+command = "simplexlora-ablate-calibration"
+
+[experiment.arguments]
+output_dir = "/tmp/simplexlora-hparam-mnli-like"
+learning_rate = 3e-4
+gradient_accumulation_steps = 16
+fat_step = 128
+
+[[experiment]]
+name = "wlora-xsum-like"
+command = "simplexlora-ablate-calibration"
+
+[experiment.arguments]
+output_dir = "/tmp/simplexlora-hparam-xsum-like"
+learning_rate = 8e-4
+gradient_accumulation_steps = 8
+fat_step = 128
+
+[[experiment]]
+name = "wlora-sst2-like"
+command = "simplexlora-ablate-calibration"
+
+[experiment.arguments]
+output_dir = "/tmp/simplexlora-hparam-sst2-like"
+learning_rate = 8e-5
+gradient_accumulation_steps = 16
+fat_step = 128
+
+[[experiment]]
+name = "wlora-qnli-like"
+command = "simplexlora-ablate-calibration"
+
+[experiment.arguments]
+output_dir = "/tmp/simplexlora-hparam-qnli-like"
+learning_rate = 5e-5
+gradient_accumulation_steps = 8
+fat_step = 56
+
+[[experiment]]
+name = "wlora-rte-like"
+command = "simplexlora-ablate-calibration"
+
+[experiment.arguments]
+output_dir = "/tmp/simplexlora-hparam-rte-like"
+learning_rate = 8e-5
+gradient_accumulation_steps = 32
+fat_step = 256
+
+[[experiment]]
+name = "wlora-mrpc-like"
+command = "simplexlora-ablate-calibration"
+
+[experiment.arguments]
+output_dir = "/tmp/simplexlora-hparam-mrpc-like"
+learning_rate = 8e-5
+gradient_accumulation_steps = 8
+fat_step = 251

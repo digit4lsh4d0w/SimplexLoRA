@@ -81,6 +81,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-seq-length", type=int, default=1024)
     parser.add_argument("--max-steps", type=int, default=-1)
     parser.add_argument("--num-train-epochs", type=float, default=3.0)
+    parser.add_argument(
+        "--warmup-steps",
+        type=int,
+        default=None,
+        help="explicit scheduler warmup; default is 3%% of planned steps",
+    )
     parser.add_argument("--learning-rate", type=float, default=1e-4)
     parser.add_argument("--weight-decay", type=float, default=0.01)
     parser.add_argument("--weight-lr", type=float, default=5e-3)
@@ -373,13 +379,22 @@ def main() -> None:
     effective_batch_size = args.batch_size * args.gradient_accumulation_steps
     steps_per_epoch = math.ceil(len(train_dataset) / effective_batch_size)
     total_steps = args.max_steps if args.max_steps > 0 else math.ceil(steps_per_epoch * args.num_train_epochs)
-    warmup_steps = max(1, int(total_steps * 0.03))
+    if args.warmup_steps is not None:
+        if not 0 <= args.warmup_steps <= total_steps:
+            raise ValueError(f"--warmup-steps must be within [0, {total_steps}], got {args.warmup_steps}")
+        warmup_steps = args.warmup_steps
+    else:
+        warmup_steps = max(1, int(total_steps * 0.03))
 
     calibration_only = bool(args.calibration_only)
     if calibration_only:
         # Stop exactly after the final projection cycle.
         total_steps = args.fat_step * args.max_fat_steps
-        warmup_steps = min(warmup_steps, max(1, total_steps // 10))
+        if args.warmup_steps is not None:
+            if args.warmup_steps > total_steps:
+                raise ValueError(f"--warmup-steps={args.warmup_steps} exceeds calibration steps={total_steps}")
+        else:
+            warmup_steps = min(warmup_steps, max(1, total_steps // 10))
 
     run_metadata = build_run_metadata(
         model,

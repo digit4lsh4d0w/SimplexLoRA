@@ -49,6 +49,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-validation-samples", type=int, default=128)
     parser.add_argument("--max-seq-length", type=int, default=1024)
     parser.add_argument("--learning-rate", type=float, default=1e-4)
+    parser.add_argument("--warmup-steps", type=int, default=None)
     parser.add_argument("--weight-decay", type=float, default=0.01)
     parser.add_argument("--weight-lr", type=float, default=5e-3)
     parser.add_argument("--lora-r", type=int, default=128)
@@ -120,7 +121,12 @@ def main() -> None:
 
     optimizer = build_optimizer(model, args)
     total_steps = args.fat_step * args.max_fat_steps
-    warmup_steps = min(max(1, int(total_steps * 0.03)), max(1, total_steps // 10))
+    if args.warmup_steps is None:
+        warmup_steps = min(max(1, int(total_steps * 0.03)), max(1, total_steps // 10))
+    else:
+        if not 0 <= args.warmup_steps <= total_steps:
+            raise ValueError(f"--warmup-steps must be within [0, {total_steps}], got {args.warmup_steps}")
+        warmup_steps = args.warmup_steps
     training_args = TrainingArguments(
         output_dir=args.output_dir,
         per_device_train_batch_size=args.batch_size,
