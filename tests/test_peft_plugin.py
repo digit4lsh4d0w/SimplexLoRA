@@ -201,7 +201,14 @@ class SimplexPeftPluginTests(unittest.TestCase):
         self.assertFalse(cast(torch.Tensor, layer.lora_weight["default"]).requires_grad)
         self.assertFalse(linear_weight(layer.lora_A["default"]).requires_grad)
         self.assertFalse(linear_weight(layer.lora_B["default"]).requires_grad)
+        self.assertEqual(tuple(linear_weight(layer.lora_A["default"]).shape), (0, 6))
+        self.assertEqual(tuple(linear_weight(layer.lora_B["default"]).shape), (4, 0))
         torch.testing.assert_close(model(inputs), torch.tanh(layer.get_base_layer()(inputs)))
+
+        from simplexlora.calibration.registry import build_layer_registry
+
+        registry = build_layer_registry(model, "default")
+        self.assertEqual(registry.identities[0].initial_rank, 0)
 
         layer._final_lora_rank_update(0, "default")
         self.assertEqual(cast(torch.Tensor, layer.lora_weight["default"]).item(), 0.0)

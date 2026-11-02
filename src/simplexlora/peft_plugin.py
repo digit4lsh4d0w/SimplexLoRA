@@ -154,8 +154,20 @@ class SimplexLoraLinear(Linear):
         if new_rank == 0:
             lora_weight.data.zero_()
             lora_weight.requires_grad_(False)
-            lora_a.requires_grad_(False)
-            lora_b.requires_grad_(False)
+            lora_a_module = cast(nn.Linear, self.lora_A[adapter_name])
+            lora_b_module = cast(nn.Linear, self.lora_B[adapter_name])
+            in_features = int(lora_a_module.in_features)
+            out_features = int(lora_b_module.out_features)
+            lora_a_module.weight = nn.Parameter(
+                torch.empty((0, in_features), device=lora_a.device, dtype=lora_a.dtype),
+                requires_grad=False,
+            )
+            lora_a_module.out_features = 0
+            lora_b_module.weight = nn.Parameter(
+                torch.empty((out_features, 0), device=lora_b.device, dtype=lora_b.dtype),
+                requires_grad=False,
+            )
+            lora_b_module.in_features = 0
             self.r[adapter_name] = 0
             self.scaling[adapter_name] = 0.0
             return
