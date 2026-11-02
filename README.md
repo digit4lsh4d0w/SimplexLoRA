@@ -35,8 +35,13 @@ Simplex LoRA is implemented as an out-of-tree PEFT layer in
 `src/simplexlora/peft_plugin.py`; it registers a custom linear module on a
 standard `LoraConfig` and does not replace the installed PEFT package.
 
-Use `uv sync --no-dev` for a runtime-only environment. Do not install packages
-with conda or pip.
+Use `uv sync --extra cuda --no-dev` for a runtime-only NVIDIA environment
+(`--extra rocm` on AMD). Do not install packages with conda or pip.
+
+The selected GPU profile must also be passed to every `uv run` command. The
+examples below use `--extra cuda` because they target an NVIDIA host; replace
+it with `--extra rocm` on AMD. Omitting the extra does not select an implicit
+GPU backend and can leave the command without the intended PyTorch runtime.
 
 ## Simplex LoRA plugin
 
@@ -156,8 +161,10 @@ fully interchangeable.
 ## Checks
 
 ```bash
-uv run ruff check .
-uv run python -m unittest discover -s tests -v
+uv lock --check
+uv run --frozen --extra cuda ruff check .
+uv run --frozen --extra cuda ruff format --check src tests
+uv run --frozen --extra cuda python -m unittest discover -s tests -v
 uv check --no-project
 uv build --all-packages
 ```
@@ -193,14 +200,14 @@ To inspect or run a source as a temporary notebook, convert it outside the
 repository:
 
 ```bash
-uv run jupytext --to notebook additional_experiments/visualization.py \
+uv run --extra cuda jupytext --to notebook additional_experiments/visualization.py \
   --output /tmp/visualization.ipynb
 ```
 
 When importing an external notebook, convert it directly to the project format:
 
 ```bash
-uv run jupytext --to py:percent path/to/external.ipynb
+uv run --extra cuda jupytext --to py:percent path/to/external.ipynb
 ```
 
 ## Run experiments
@@ -208,21 +215,21 @@ uv run jupytext --to py:percent path/to/external.ipynb
 Run experiments through their uv-managed entry points:
 
 ```bash
-uv run simplexlora-grid --help
-uv run simplexlora-grid glue-deberta --dry-run
-uv run simplexlora-grid glue-deberta --select simplex
-uv run simplexlora-grid nlg --select lora
-uv run simplexlora-grid squad --select simplex-lora
-uv run simplexlora-grid qwen
-uv run simplexlora-grid additional --select memory
+uv run --extra cuda simplexlora-grid --help
+uv run --extra cuda simplexlora-grid glue-deberta --dry-run
+uv run --extra cuda simplexlora-grid glue-deberta --select simplex
+uv run --extra cuda simplexlora-grid nlg --select lora
+uv run --extra cuda simplexlora-grid squad --select simplex-lora
+uv run --extra cuda simplexlora-grid qwen
+uv run --extra cuda simplexlora-grid additional --select memory
 
-uv run simplexlora-glue --help
-uv run simplexlora-nlg --help
-uv run simplexlora-squad --help
-uv run simplexlora-llm --help
-uv run simplexlora-dotprod --help
-uv run simplexlora-memory --help
-uv run python additional_experiments/visualization.py
+uv run --extra cuda simplexlora-glue --help
+uv run --extra cuda simplexlora-nlg --help
+uv run --extra cuda simplexlora-squad --help
+uv run --extra cuda simplexlora-llm --help
+uv run --extra cuda simplexlora-dotprod --help
+uv run --extra cuda simplexlora-memory --help
+uv run --extra cuda python additional_experiments/visualization.py
 ```
 
 Built-in grid configurations cover GLUE DeBERTa, NLG, SQuAD, Qwen and the

@@ -1332,8 +1332,9 @@ render_console_summary(
 8. Повреждённый или неполный план не может быть превращён в handoff.
 9. Повторный запуск в тот же каталог не смешивает артефакты.
 10. Два запуска с разными seed сравниваются через `compare_calibration_runs`.
-11. `uv check --no-project`, `uv run ruff check` и
-    `uv run ruff format --check` проходят.
+11. `uv check --no-project`, `uv run --extra cuda ruff check` и
+    `uv run --extra cuda ruff format --check` проходят; на AMD
+    `--extra cuda` заменяется на `--extra rocm`.
 12. CPU unit- и integration-тесты проходят без GPU.
 
 ## 16. Рекомендуемая декомпозиция кода
