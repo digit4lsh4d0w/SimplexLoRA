@@ -33,12 +33,16 @@ from simplexlora.experiments.decompile import (
     select_dataset,
     tokenize_dataset,
 )
+from simplexlora.tools.optimization_clusters import OPTIMIZATION_LEVELS, default_cluster_dir
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-id", default=DEFAULT_MODEL)
     parser.add_argument("--dataset-path", default=None)
+    parser.add_argument("--optimization-level", choices=(*OPTIMIZATION_LEVELS, "all"), default="O0")
+    parser.add_argument("--optimization-clusters", default=None)
+    parser.add_argument("--optimization-min-confidence", type=float, default=0.98)
     parser.add_argument("--output-dir", default="outputs/qwen-simplex-ablation")
     parser.add_argument("--ablation-output-dir", default=None)
     parser.add_argument("--max-train-samples", type=int, default=1_000)
@@ -99,6 +103,9 @@ def main() -> None:
         args.max_train_samples,
         args.max_validation_samples,
         args.seed,
+        optimization_level=args.optimization_level,
+        optimization_clusters=Path(args.optimization_clusters) if args.optimization_clusters else None,
+        optimization_min_confidence=args.optimization_min_confidence,
     )
     model, tokenizer = load_model_and_tokenizer(args)
     train_dataset = tokenize_dataset(train_raw, tokenizer, args.max_seq_length)
@@ -165,6 +172,11 @@ def main() -> None:
             "validation_examples": len(validation_dataset),
             "max_seq_length": args.max_seq_length,
             "ablation_max_samples": args.ablation_max_samples,
+            "optimization_level": args.optimization_level,
+            "optimization_min_confidence": args.optimization_min_confidence,
+            "optimization_clusters": str(
+                Path(args.optimization_clusters) if args.optimization_clusters else default_cluster_dir()
+            ),
         },
         device=next(model.parameters()).device,
     )
@@ -212,6 +224,8 @@ def main() -> None:
         "gradient_delta_spearman": result.gradient_delta_spearman,
         "top_k": result.top_k,
         "top_k_overlap": result.top_k_overlap,
+        "optimization_level": args.optimization_level,
+        "optimization_min_confidence": args.optimization_min_confidence,
         "ablation_json": str(json_path),
         "ablation_report": str(markdown_path),
     }

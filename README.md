@@ -256,6 +256,35 @@ uv run --extra rocm simplexlora-decompile \
 This writes the PEFT adapter, tokenizer files and memory metrics to
 `outputs/qwen2.5-coder-decompile-simplex`.
 
+## Optimization-level clusters
+
+The released `LLM4Binary/decompile-bench` training split does not include the
+official `opt` column. Only source paths containing a `build_O0` ... `build_O3`
+marker can be labelled exactly. Build index-only clusters from the local dataset
+before training:
+
+```bash
+uv run --extra cuda simplexlora-cluster-optimization
+```
+
+The command trains grouped-by-project assembly classifiers, validates them on
+held-out projects, and writes the complete mapping and four cluster index files
+under:
+
+```text
+~/.cache/huggingface/simplexlora/optimization-clusters/decompile-bench-v1/
+```
+
+O0 uses a dedicated binary classifier with threshold `0.98`; every row records
+its confidence and whether the label came from `path` or a model. The grouped
+repository holdout currently gives O0 precision `0.965` and recall `0.962`. O1-O3 are
+retained as provisional clusters because separating adjacent optimization
+levels from assembly alone is substantially less reliable.
+
+`simplexlora-decompile` and `simplexlora-ablate-calibration` use O0 by default.
+Use `--optimization-level all` to disable cluster filtering, or point to another
+mapping with `--optimization-clusters`.
+
 ## Layer ablation
 
 The ablation command runs the same calibration phase, then measures held-out

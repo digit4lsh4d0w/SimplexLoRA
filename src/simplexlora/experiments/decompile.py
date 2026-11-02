@@ -33,6 +33,11 @@ from simplexlora.calibration import (
 )
 from simplexlora.calibration.trainer import SimplexCalibrationTrainer
 from simplexlora.peft_plugin import SimplexLoraLinear, get_simplex_peft_model, make_simplex_lora_config
+from simplexlora.tools.optimization_clusters import (
+    OPTIMIZATION_LEVELS,
+    default_cluster_dir,
+    load_optimization_indices,
+)
 from .arguments import as_tokenizer
 
 
@@ -53,6 +58,23 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-id", default=DEFAULT_MODEL)
     parser.add_argument("--dataset-path", default=None)
+    parser.add_argument(
+        "--optimization-level",
+        choices=(*OPTIMIZATION_LEVELS, "all"),
+        default="O0",
+        help="optimization-level cluster from the derived Decompile-Bench mapping",
+    )
+    parser.add_argument(
+        "--optimization-clusters",
+        default=None,
+        help="directory containing the optimization cluster manifest and parquet mapping",
+    )
+    parser.add_argument(
+        "--optimization-min-confidence",
+        type=float,
+        default=0.98,
+        help="minimum confidence for classifier-derived optimization cluster rows",
+    )
     parser.add_argument("--output-dir", default="outputs/qwen2.5-coder-decompile-simplex")
     parser.add_argument("--max-train-samples", type=int, default=20_000)
     parser.add_argument("--max-validation-samples", type=int, default=1_000)
@@ -105,19 +127,41 @@ def file_bucket(path: str) -> int:
     return int.from_bytes(digest, "little") % 20
 
 
-def select_dataset(path: Path, max_train: int, max_validation: int, seed: int) -> tuple[Dataset, Dataset]:
+def select_dataset(
+    path: Path,
+    max_train: int,
+    max_validation: int,
+    seed: int,
+    *,
+    optimization_level: str = "O0",
+    optimization_clusters: Path | None = None,
+    optimization_min_confidence: float = 0.98,
+) -> tuple[Dataset, Dataset]:
     dataset = load_from_disk(str(path))
     if not isinstance(dataset, Dataset):
         raise TypeError("Expected a single dataset split, got DatasetDict")
+    if optimization_level != "all":
+        cluster_dir = optimization_clusters or default_cluster_dir()
+        indices = load_optimization_indices(
+            cluster_dir,
+            level=optimization_level,
+            min_confidence=optimization_min_confidence,
+            dataset_rows=len(dataset),
+        )
+        dataset = dataset.select(indices)
+        print(f"Optimization cluster {optimization_level}: {len(dataset)} source rows")
     sample_count = min(len(dataset), max_train + max_validation)
     sampled = dataset.shuffle(seed=seed).select(range(sample_count))
 
-    validation = sampled.filter(lambda row: file_bucket(row["file"]) == 0)
-    train = sampled.filter(lambda row: file_bucket(row["file"]) != 0)
-
-    if len(validation) == 0:
-        split = validation.train_test_split(test_size=min(1000, sample_count // 20), seed=seed)
-        train, validation = split["train"], split["test"]
+    if max_validation <= 0:
+        train = sampled
+        validation = sampled.select([])
+    else:
+        validation = sampled.filter(lambda row: file_bucket(row["file"]) == 0)
+        train = sampled.filter(lambda row: file_bucket(row["file"]) != 0)
+        if len(validation) == 0:
+            split = train.train_test_split(test_size=min(1000, sample_count // 20), seed=seed)
+            train, validation = split["train"], split["test"]
 
     train = train.select(range(min(len(train), max_train)))
     validation = validation.select(range(min(len(validation), max_validation)))
@@ -311,6 +355,9 @@ def main() -> None:
         args.max_train_samples,
         args.max_validation_samples,
         args.seed,
+        optimization_level=args.optimization_level,
+        optimization_clusters=Path(args.optimization_clusters) if args.optimization_clusters else None,
+        optimization_min_confidence=args.optimization_min_confidence,
     )
     model, tokenizer = load_model_and_tokenizer(args)
     train_dataset = tokenize_dataset(train_raw, tokenizer, args.max_seq_length)
@@ -343,6 +390,11 @@ def main() -> None:
             "train_examples": len(train_dataset),
             "validation_examples": len(validation_dataset),
             "max_seq_length": args.max_seq_length,
+            "optimization_level": args.optimization_level,
+            "optimization_min_confidence": args.optimization_min_confidence,
+            "optimization_clusters": str(
+                Path(args.optimization_clusters) if args.optimization_clusters else default_cluster_dir()
+            ),
         },
         device=next(model.parameters()).device,
     )
@@ -443,6 +495,8 @@ def main() -> None:
         "train_examples": len(train_dataset),
         "validation_examples": len(validation_dataset),
         "target_modules": TARGET_MODULES,
+        "optimization_level": args.optimization_level,
+        "optimization_min_confidence": args.optimization_min_confidence,
         **calibration_summary,
     }
     output_path = Path(args.output_dir)
