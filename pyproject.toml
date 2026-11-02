@@ -27,6 +27,7 @@ dependencies = [
 ]
 
 [project.scripts]
+simplexlora-ablate-calibration = "simplexlora.experiments.ablate:main"
 simplexlora-decompile = "simplexlora.experiments.decompile:main"
 simplexlora-dotprod = "simplexlora.experiments.dotprod:main"
 simplexlora-glue = "simplexlora.experiments.glue.cli:main"

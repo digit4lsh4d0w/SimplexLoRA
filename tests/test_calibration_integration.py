@@ -128,6 +128,42 @@ def registry_names(model) -> list[str]:
 
 
 class FullArtifactPipelineTests(unittest.TestCase):
+    def test_pre_final_callback_runs_after_plan_is_frozen(self) -> None:
+        with TemporaryDirectory() as tmp:
+            model = build_tiny_causal_lm(seed=9)
+            optimizer = build_optimizer(model, fat_step=1, max_fat_steps=2)
+            args = calibration_args(
+                calibration_output_dir=str(Path(tmp) / "calibration"),
+                seed=9,
+                fat_step=1,
+                max_fat_steps=2,
+                calibration_run_id="calib-callback-test",
+            )
+            metadata = build_run_metadata(model, adapter_name="default", args=args)
+            observed: list[object] = []
+            session = create_calibration_session(
+                model=model,
+                optimizer=optimizer,
+                args=args,
+                run_metadata=metadata,
+                pre_final_rank_update=lambda plan: observed.append(plan),
+            )
+            generator = torch.Generator().manual_seed(91)
+            try:
+                for _ in range(2):
+                    optimizer.zero_grad(set_to_none=True)
+                    inputs = torch.randint(0, 63, (2, 8), generator=generator)
+                    loss = model(input_ids=inputs, labels=inputs).loss
+                    loss.backward()
+                    optimizer.add_microbatch_loss(loss.detach())
+                    optimizer.step()
+                session.finalize()
+            finally:
+                session.close()
+
+            self.assertEqual(len(observed), 1)
+            self.assertIs(observed[0], session.plan)
+
     def test_two_calibration_cycles_produce_full_artifact_set(self) -> None:
         with TemporaryDirectory() as tmp:
             output_dir = Path(tmp) / "calibration"

@@ -1,13 +1,18 @@
+from __future__ import annotations
+
 import math
 import warnings
 from collections.abc import Callable
 from math import ceil
-from typing import Any, TypedDict, cast, overload
+from typing import TYPE_CHECKING, Any, TypedDict, cast, overload
 
 import numpy as np
 import torch
 import torch.optim as optim
 from simplexlora.peft_plugin import SimplexLoraLinear
+
+if TYPE_CHECKING:
+    from simplexlora.calibration.models import ProjectionEvent
 
 
 Closure = Callable[[], float]
@@ -610,7 +615,7 @@ class SimplexAdamW(optim.Optimizer):
         new_lora_ranks_all: list[int],
         w_before: list[float],
         weight_group: dict,
-    ) -> object:
+    ) -> ProjectionEvent:
         from simplexlora.calibration.models import ProjectionEvent, utc_now_iso
 
         chosen_positions = [
@@ -754,6 +759,8 @@ class SimplexAdamW(optim.Optimizer):
                         weight_group=group,
                     )
                     self.calibration_observer.on_projection(event)
+                    if event.is_final_projection:
+                        self.calibration_observer.on_before_final_rank_update()
                     chosen_positions = [
                         position
                         for position, parameter in enumerate(group["params"])

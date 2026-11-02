@@ -7,6 +7,15 @@ functions and never format JSON themselves.
 
 from __future__ import annotations
 
+from simplexlora.calibration.ablation import (
+    ABLATION_JSON_FILENAME,
+    ABLATION_MARKDOWN_FILENAME,
+    LayerAblationEvaluator,
+    LayerAblationRecord,
+    LayerAblationResult,
+    render_ablation_markdown,
+    write_ablation_artifacts,
+)
 from simplexlora.calibration.cli import (
     add_calibration_arguments,
     build_run_metadata,
@@ -69,6 +78,8 @@ from simplexlora.calibration.trainer import SimplexCalibrationSeq2SeqTrainer, Si
 
 __all__ = [
     "SCHEMA_VERSION",
+    "ABLATION_JSON_FILENAME",
+    "ABLATION_MARKDOWN_FILENAME",
     "ArtifactPaths",
     "CalibrationError",
     "CalibrationManifest",
@@ -82,6 +93,9 @@ __all__ = [
     "CalibrationValidationError",
     "CalibrationWarning",
     "LayerIdentity",
+    "LayerAblationEvaluator",
+    "LayerAblationRecord",
+    "LayerAblationResult",
     "LayerPlan",
     "LayerPlanEntry",
     "LayerProjectionRecord",
@@ -110,12 +124,14 @@ __all__ = [
     "handoff_options_from_args",
     "load_layer_plan",
     "render_calibration_report",
+    "render_ablation_markdown",
     "render_console_summary",
     "render_stability_report",
     "validate_calibration_arguments",
     "validate_layer_plan",
     "verify_applied_plan",
     "write_calibration_artifacts",
+    "write_ablation_artifacts",
     "SimplexCalibrationTrainer",
     "SimplexCalibrationSeq2SeqTrainer",
 ]

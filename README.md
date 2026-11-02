@@ -255,3 +255,29 @@ uv run --extra rocm simplexlora-decompile \
 
 This writes the PEFT adapter, tokenizer files and memory metrics to
 `outputs/qwen2.5-coder-decompile-simplex`.
+
+## Layer ablation
+
+The ablation command runs the same calibration phase, then measures held-out
+loss after disabling all adapter modules of each transformer layer. The
+measurement happens after the final projection but before the rank reset, while
+the calibrated adapters are still live.
+
+```bash
+HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 \
+uv run --extra cuda simplexlora-ablate-calibration \
+  --offline \
+  --model-id Qwen/Qwen2.5-Coder-0.5B-Instruct \
+  --output-dir /tmp/qwen05-ablation \
+  --lora-r 128 \
+  --lora-alpha 32 \
+  --fat-step 10 \
+  --max-fat-steps 5 \
+  --ablation-max-samples 64
+```
+
+The command writes the normal calibration artifacts plus
+`ablation_report.json` and `ablation_report.md`. The report compares calibrated
+layer importance and lora-weight gradient norms with the measured held-out
+`delta_loss`. Held-out examples are never used for the calibration optimizer
+steps.

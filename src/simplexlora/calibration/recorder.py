@@ -11,6 +11,7 @@ from __future__ import annotations
 import dataclasses
 import math
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -683,6 +684,9 @@ class _OptimizerObserverBridge:
         if snapshot.is_final_projection:
             self._session.on_final_projection()
 
+    def on_before_final_rank_update(self) -> None:
+        self._session.on_before_final_rank_update()
+
     def on_final_rank_update(self) -> None:
         self._session.on_final_rank_update()
 
@@ -701,6 +705,7 @@ class CalibrationSession:
         top_k: int,
         handoff_options: dict[str, Any] | None = None,
         thresholds: ReportThresholds | None = None,
+        pre_final_rank_update: Callable[[LayerPlan], Any] | None = None,
         enabled: bool = True,
     ) -> None:
         if enabled:
@@ -719,6 +724,7 @@ class CalibrationSession:
         self.top_k = top_k
         self.handoff_options = dict(handoff_options or {})
         self.thresholds = thresholds or ReportThresholds()
+        self.pre_final_rank_update = pre_final_rank_update
         self.enabled = enabled
         self.plan: LayerPlan | None = None
         self._closed = False
@@ -767,6 +773,12 @@ class CalibrationSession:
             raise CalibrationValidationError(report)
         self.recorder.manifest.extra["handoff_usable"] = True
         self.recorder.calibration_completed = True
+
+    def on_before_final_rank_update(self) -> None:
+        """Run optional diagnostics while the calibrated adapters are still live."""
+        if not self.enabled or self.plan is None or self.pre_final_rank_update is None:
+            return
+        self.pre_final_rank_update(self.plan)
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -873,6 +885,7 @@ def create_calibration_session(
     optimizer: Any,
     args: Any,
     run_metadata: CalibrationRunMetadata,
+    pre_final_rank_update: Callable[[LayerPlan], Any] | None = None,
 ) -> CalibrationSession:
     """Build a ready-to-use session from CLI arguments (thin wiring helper).
 
@@ -894,6 +907,7 @@ def create_calibration_session(
             recorder=None,
             adapter_name=adapter_name,
             top_k=top_k,
+            pre_final_rank_update=pre_final_rank_update,
             enabled=False,
         )
 
@@ -914,6 +928,7 @@ def create_calibration_session(
         adapter_name=adapter_name,
         top_k=top_k,
         handoff_options=handoff_options_from_args(args),
+        pre_final_rank_update=pre_final_rank_update,
     )
 
 
